@@ -1,5 +1,11 @@
 const assert = require('assert');
-const { pickNext } = require('./userScript.js');
+const { pickNext, parseAdTime } = require('./userScript.js');
+
+assert.strictEqual(parseAdTime('Ad 0:25'), 25);
+assert.strictEqual(parseAdTime('Anuncio 1 de 2 · 1:05'), 65);
+assert.strictEqual(parseAdTime('Ad 1 of 3 0:40 then 0:12'), 12); // last timestamp = time left
+assert.strictEqual(parseAdTime('Ad 15 s'), 15);
+assert.ok(isNaN(parseAdTime('Ad')));
 
 const box = (left, top) => ({ left, top, width: 100, height: 50 });
 const from = box(500, 500);

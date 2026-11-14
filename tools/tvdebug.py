@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Debug the PrimeBrew page on the TV through service.js (every request RSA-signed).
+
+usage: tvdebug.py [--ip IP] [--key KEY] COMMAND
+  status            service + page connection state
+  logs [-f]         console output from the page (-f: keep following)
+  eval JS           evaluate JS in the page, print the result (Promises are awaited)
+  evalfile FILE     same, JS from a file ('-' = stdin)
+  snapshot          URL, title, focused element and the visible interactive elements
+KEY defaults to debug.key next to this script (private half of service.js's PUBLIC_KEY).
+"""
+import base64, json, pathlib, subprocess, sys, time, urllib.error, urllib.request
+
+SNAPSHOT = r"""(function () {
+  function desc(el) {
+    var r = el.getBoundingClientRect();
+    return { tag: el.tagName.toLowerCase(), id: el.id || undefined,
+      cls: (el.getAttribute('class') || '').slice(0, 80) || undefined,
+      text: (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 60),
+      rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)] };
+  }
+  var sel = 'a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"]),[role=button],[role=link],[role=tab]';
+  var els = [].slice.call(document.querySelectorAll(sel)).filter(function (e) {
+    var r = e.getBoundingClientRect();
+    return r.width > 3 && r.height > 3 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+  });
+  var v = document.querySelector('video');
+  return { url: location.href, title: document.title, viewport: [innerWidth, innerHeight],
+    focused: document.querySelector('.pb-focus') ? desc(document.querySelector('.pb-focus')) : null,
+    video: v ? { paused: v.paused, t: v.currentTime, dur: v.duration, w: v.videoWidth, h: v.videoHeight } : null,
+    visible: els.map(desc) };
+})()"""
+
+
+def request(ip, key, method, path, body=''):
+    ts = str(int(time.time() * 1000))
+    sig = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', key],
+                         input=f'{ts}\n{method} {path}\n{body}'.encode(), capture_output=True, check=True).stdout
+    req = urllib.request.Request(f'http://{ip}:8787{path}', method=method,
+                                 data=body.encode() if method == 'POST' else None,
+                                 headers={'X-PB-TS': ts, 'X-PB-Sig': base64.b64encode(sig).decode(),
+                                          'Content-Type': 'text/plain'})
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            data = r.read()
+    except urllib.error.HTTPError as e:
+        sys.exit(f'HTTP {e.code}: {e.read().decode()}')
+    except OSError as e:
+        sys.exit(f'cannot reach debug service at {ip}:8787 ({e}); is PrimeBrew open on the TV?')
+    return json.loads(data) if data else None
+
+
+def run_js(ip, key, js):
+    res = request(ip, key, 'POST', '/cmd', js)
+    out = res.get('value')
+    print(out if isinstance(out, str) else json.dumps(out, indent=1, ensure_ascii=False))
+    if not res.get('ok'):
+        sys.exit(1)
+
+
+def main(argv):
+    ip, key = '192.168.31.105', str(pathlib.Path(__file__).with_name('debug.key'))
+    while argv[:1] in (['--ip'], ['--key']):
+        if argv[0] == '--ip':
+            ip = argv[1]
+        else:
+            key = argv[1]
+        argv = argv[2:]
+    cmd, rest = (argv[0], argv[1:]) if argv else ('', [])
+
+    if cmd == 'status':
+        print(json.dumps(request(ip, key, 'GET', '/status'), indent=1))
+    elif cmd == 'logs':
+        since = 0
+        while True:
+            for entry in request(ip, key, 'GET', f'/logs?since={since}'):
+                since = entry['t']
+                print(time.strftime('%H:%M:%S', time.localtime(entry['t'] / 1000)), entry['level'], entry['msg'])
+            if rest != ['-f']:
+                break
+            time.sleep(2)
+    elif cmd == 'eval' and rest:
+        run_js(ip, key, ' '.join(rest))
+    elif cmd == 'evalfile' and rest:
+        run_js(ip, key, sys.stdin.read() if rest[0] == '-' else pathlib.Path(rest[0]).read_text())
+    elif cmd == 'snapshot':
+        run_js(ip, key, SNAPSHOT)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

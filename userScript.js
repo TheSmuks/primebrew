@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.3.0';
+  var VERSION = '0.4.0';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -23,8 +23,17 @@
     return best;
   }
 
-  if (typeof window === 'undefined') { module.exports = { pickNext: pickNext }; return; }
-  if (window.__primebrew) return;
+  // Seconds left in an ad break from the player's timer text, e.g. "Ad 1 of 2 · 0:25" -> 25.
+  function parseAdTime(text) {
+    var m = /(\d+):(\d{2})(?!.*\d:\d)/.exec(text || '');
+    if (m) return Number(m[1]) * 60 + Number(m[2]);
+    m = /(\d+)\s*s\b/.exec(text || '');
+    return m ? Number(m[1]) : NaN;
+  }
+
+  if (typeof window === 'undefined') { module.exports = { pickNext: pickNext, parseAdTime: parseAdTime }; return; }
+  // TizenBrew evaluates this in every execution context, iframes included: only run in the page.
+  if (window.top !== window || window.__primebrew) return;
   window.__primebrew = true;
 
   var KEYS = { 37: 'left', 38: 'up', 39: 'right', 40: 'down' };
@@ -109,6 +118,104 @@
     e.preventDefault();
     e.stopPropagation();
   }, true);
+
+  // Auto-skip: click the skip / next-episode buttons Prime itself shows (intro, recap, credits).
+  // Each button element is clicked once, so a skip that Prime ignores doesn't loop.
+  var SKIP = '[class*="skipelement"] button, button[class*="skipelement"], [class*="nextupcard-button"]';
+  setInterval(function () {
+    if (!playerVideo()) return;
+    var btns = document.querySelectorAll(SKIP);
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      if (b.getAttribute('data-pb-clicked') || !visible(b)) continue;
+      b.setAttribute('data-pb-clicked', '1');
+      console.log('[PrimeBrew] auto-skip: ' + (b.textContent || b.className).trim().slice(0, 60));
+      b.click();
+    }
+  }, 1000);
+
+  // Ad skip, same idea as the Morphe Android TV patch: Prime splices ads into the stream
+  // (server-inserted), so when an ad break starts we seek past it. The web player shows the
+  // break's remaining time; jump that far. Chained ads (a 3-min pod) take several jumps:
+  // each one is capped at 90 s (PrimeVideoTB found bigger seeks upset the player) and the
+  // next is only read once the seek has finished and the timer has had time to refresh,
+  // so a stale timer can't make us jump into real content.
+  var AD_MAX_JUMP = 90, AD_SETTLE_MS = 1200;
+  var adReadyAt = 0, lastAdText = '';
+  setInterval(function () {
+    var v = playerVideo(), timer = document.querySelector('.atvwebplayersdk-ad-timer-text');
+    if (!timer || !visible(timer)) { lastAdText = ''; return; }
+    if (!v || v.paused) return;
+    if (v.seeking) { adReadyAt = Date.now() + AD_SETTLE_MS; return; }
+    if (Date.now() < adReadyAt || timer.textContent === lastAdText) return;
+    var left = parseAdTime(timer.textContent);
+    if (!(left > 1)) return;
+    lastAdText = timer.textContent;
+    var jump = Math.min(left - 1, AD_MAX_JUMP);
+    adReadyAt = Date.now() + AD_SETTLE_MS;
+    console.log('[PrimeBrew] ad skip: ' + jump + 's (' + timer.textContent.trim() + ')');
+    v.currentTime += jump;
+  }, 250);
+
+  // Debug client: talks to service.js on the TV (127.0.0.1 is allowed from an https page).
+  // Ships console output there and evaluates signed commands from tools/tvdebug.py.
+  var DEBUG = 'http://127.0.0.1:8787';
+  var logBuf = [];
+
+  function xhr(method, path, body, done) {
+    var x = new XMLHttpRequest();
+    x.open(method, DEBUG + path);
+    x.timeout = 30000;
+    x.onload = function () { done && done(x.status, x.responseText); };
+    x.onerror = x.ontimeout = function () { done && done(0, ''); };
+    x.send(body === undefined ? null : body); // text/plain body: no CORS preflight
+  }
+
+  function capture(level, args) {
+    var parts = [];
+    for (var i = 0; i < args.length; i++) {
+      var a = args[i];
+      try { parts.push(typeof a === 'string' ? a : a instanceof Error ? a.stack || String(a) : JSON.stringify(a)); }
+      catch (e) { parts.push(String(a)); }
+    }
+    logBuf.push({ level: level, msg: parts.join(' ') });
+  }
+
+  ['log', 'info', 'warn', 'error'].forEach(function (level) {
+    var orig = console[level];
+    console[level] = function () { capture(level, arguments); return orig.apply(console, arguments); };
+  });
+  window.addEventListener('error', function (e) { capture('error', [e.message + ' @ ' + e.filename + ':' + e.lineno]); });
+  window.addEventListener('unhandledrejection', function (e) { capture('error', ['unhandled rejection', e.reason]); });
+  capture('info', ['PrimeBrew ' + VERSION + ' on ' + location.href]);
+
+  setInterval(function () {
+    if (!logBuf.length) return;
+    xhr('POST', '/page/log', JSON.stringify(logBuf.splice(0, logBuf.length)));
+  }, 1000);
+
+  function reply(id, ok, value) {
+    var out;
+    try { out = JSON.stringify(value === undefined ? null : value); } catch (e) { out = JSON.stringify(String(value)); }
+    if (out.length > 500000) out = JSON.stringify(out.slice(0, 500000) + '…[truncated]');
+    xhr('POST', '/page/result', '{"id":' + id + ',"ok":' + ok + ',"value":' + out + '}');
+  }
+
+  (function poll() {
+    xhr('GET', '/page/next', undefined, function (status, text) {
+      if (status === 0) return setTimeout(poll, 10000); // service not running (yet)
+      if (status === 200) {
+        var cmd = JSON.parse(text);
+        try {
+          var r = (0, eval)(cmd.js);
+          if (r && typeof r.then === 'function') {
+            r.then(function (v) { reply(cmd.id, true, v); }, function (e) { reply(cmd.id, false, String(e && e.stack || e)); });
+          } else reply(cmd.id, true, r);
+        } catch (e) { reply(cmd.id, false, String(e && e.stack || e)); }
+      }
+      poll();
+    });
+  })();
 
   var badge = document.createElement('div');
   badge.id = 'pb-badge';

@@ -13,6 +13,20 @@ home screen that opens straight into it.
 | Back | previous page · leave a text field | leave control highlight, then previous page |
 | Media keys | — | play/pause/stop, FF/RW 10 s |
 
+## Automatic skipping
+
+- **Ads**: like the Morphe Android TV patch, it seeks past server-inserted ad breaks using the
+  player's ad countdown (≤ 90 s per jump, so a 3-minute pod takes two jumps).
+- **Intro / recap / next episode**: clicks the skip buttons Prime shows.
+
+## Debugging from the LAN
+
+`service.js` runs on the TV (TizenBrew starts it with the mod) and relays between the page and
+`tools/tvdebug.py`: `status`, `logs [-f]`, `snapshot`, `eval JS`. Every LAN request must be
+signed with the private half of `PUBLIC_KEY` in `service.js` (`tools/debug.key`, never
+committed), because a command runs JS in your logged-in Prime session.
+**Forks: replace `PUBLIC_KEY`** (`openssl genpkey -algorithm RSA -out debug.key && openssl pkey -in debug.key -pubout`).
+
 ## Install on the TV
 
 Needs TizenBrew, with the TV's developer-mode Host PC IP set to `127.0.0.1`.
