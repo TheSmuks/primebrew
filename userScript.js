@@ -44,8 +44,11 @@
 
   var style = document.createElement('style');
   style.textContent =
-    '.pb-focus{outline:4px solid #00a8e1 !important;outline-offset:3px !important;' +
-    'box-shadow:0 0 0 8px rgba(0,168,225,.35) !important;border-radius:6px}' +
+    // Drawn inside the element: Prime's rows clip anything outside their cards.
+    '.pb-focus{outline:5px solid #00a8e1 !important;outline-offset:-5px !important;' +
+    'box-shadow:inset 0 0 0 10px rgba(0,168,225,.35) !important}' +
+    // 10-foot declutter: the desktop footer is unreachable link noise on a TV.
+    '[data-testid="footer"]{display:none !important}' +
     '#pb-badge{position:fixed;top:20px;right:20px;z-index:2147483647;background:#00a8e1;color:#fff;' +
     'font:20px sans-serif;padding:10px 18px;border-radius:8px;pointer-events:none}';
   (document.head || document.documentElement).appendChild(style);
@@ -100,6 +103,13 @@
     else v.currentTime += action === 'ff' ? 10 : -10;
   }
 
+  // A title card's focusable element is its hover-expand button; the link to the title is a
+  // sibling with tabindex=-1. OK on a card should open the title.
+  function activate(el) {
+    var card = el.hasAttribute('aria-expanded') && el.closest('article'), link = card && card.querySelector('a[href]');
+    (link || el).click();
+  }
+
   // Back on the first page leaves the app, like a native one (history.back() would do nothing).
   function back() {
     var before = location.href;
@@ -123,7 +133,7 @@
       else back();
     }
     else if (dir && !(typing && (dir === 'left' || dir === 'right'))) { move(dir); }
-    else if (k === ENTER && current && !typing) { current.click(); }
+    else if (k === ENTER && current && !typing) { activate(current); }
     else return; // let the page handle it
     e.preventDefault();
     e.stopPropagation();
@@ -231,6 +241,20 @@
   badge.id = 'pb-badge';
   badge.textContent = 'PrimeBrew ' + VERSION;
   function mount() { document.body.appendChild(badge); }
+  // Ask TizenBrew (its local WebSocket) whether our service is running, and show it on the badge.
+  try {
+    var ws = new WebSocket('ws://127.0.0.1:8081');
+    ws.onopen = function () { ws.send(JSON.stringify({ type: 7 })); }; // GetServiceStatuses
+    ws.onmessage = function (m) {
+      var msg = JSON.parse(m.data);
+      if (msg.type !== 7) return;
+      ws.close();
+      var mine = (msg.payload || []).filter(function (s) { return /primebrew/i.test(s.name); })[0];
+      var st = !mine ? 'service not started' : mine.hasCrashed ? 'service crashed ' + JSON.stringify(mine.error) : 'service ok';
+      console.log('[PrimeBrew] ' + st);
+      badge.textContent = 'PrimeBrew ' + VERSION + ' · ' + st;
+    };
+  } catch (e) { console.warn('[PrimeBrew] status: ' + e); }
   if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount);
-  setTimeout(function () { if (badge.parentNode) badge.parentNode.removeChild(badge); }, 5000);
+  setTimeout(function () { if (badge.parentNode) badge.parentNode.removeChild(badge); }, 8000);
 })();

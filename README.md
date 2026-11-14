@@ -9,8 +9,8 @@ home screen that opens straight into it.
 | Key | Browsing | In the player |
 | --- | --- | --- |
 | Arrows | move highlight (scrolls when nothing is that way) | ←/→ seek 10 s · ↑/↓ highlight player controls |
-| OK | click highlighted item | play/pause (or click highlighted control) |
-| Back | previous page · leave a text field | leave control highlight, then previous page |
+| OK | open highlighted item (a title card opens the title) | play/pause (or click highlighted control) |
+| Back | previous page (exits on the first page) · leave a text field | leave control highlight, then previous page |
 | Media keys | — | play/pause/stop, FF/RW 10 s |
 
 ## Automatic skipping
@@ -36,6 +36,11 @@ Needs TizenBrew, with the TV's developer-mode Host PC IP set to `127.0.0.1`.
 2. **Launcher** (optional, home-screen icon): TizenBrew Installer → install from GitHub →
    `TheSmuks/primebrew` (uses the latest release's `PrimeBrew.wgt`). Or over sdb:
    `sdb push PrimeBrew.wgt /home/owner/share/tmp/sdk_tools/ && sdb shell 0 vd_appinstall PrimeBrew1 /home/owner/share/tmp/sdk_tools/PrimeBrew.wgt`
+
+**Updates are automatic.** TizenBrew keeps a module's main file in memory until the TV fully
+restarts, so the main file is `loader.js`, which fetches the latest release's `userScript.js`
+on every launch. The 5-second badge shows the running version and whether the debug service is up.
+(`service.js` still only updates after a full restart: hold Power for 5 s.)
 
 The launcher is signed with the Tizen SDK public distributor cert, which developer-mode TVs
 before Tizen 7 accept. Tizen 7+ needs a Samsung cert: TizenBrew Installer re-signs it for you.
