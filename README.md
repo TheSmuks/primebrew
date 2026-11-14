@@ -43,5 +43,5 @@ git push && git push --tags   # CI signs PrimeBrew.wgt, attaches it to the relea
 CI needs two repo secrets: `TIZEN_AUTHOR_P12` (base64 of the author `.p12`) and
 `TIZEN_AUTHOR_PW`. Keep the same author cert forever: the TV only accepts launcher updates
 signed by the cert that installed it. Forks: make your own with
-`npx github:reisxd/tizen.js create-tizen-cert --name <you> --password <pw> --output author.p12`.
+`npx https://codeload.github.com/reisxd/tizen.js/tar.gz/main create-tizen-cert --name <you> --password <pw> --output author.p12`.
 Local build: `AUTHOR_P12=… AUTHOR_PW=… launcher/build.sh`.

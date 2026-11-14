@@ -6,7 +6,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${AUTHOR_P12:?}" "${AUTHOR_PW:?}"
-TIZENJS=${TIZENJS:-npx -y github:reisxd/tizen.js#45b00106149d0c8eff74ead4a979c909dd80efd6}
+# Tarball URL, not github:…: npx fails on git specs ("GitFetcher requires an Arborist constructor").
+TIZENJS=${TIZENJS:-npx -y https://codeload.github.com/reisxd/tizen.js/tar.gz/45b00106149d0c8eff74ead4a979c909dd80efd6}
 VERSION=$(node -p "require('./package.json').version")
 OUT=$PWD/dist/PrimeBrew.wgt
 AUTHOR_P12=$(realpath "$AUTHOR_P12")
