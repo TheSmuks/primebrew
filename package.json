@@ -1,0 +1,27 @@
+{
+  "name": "primebrew",
+  "appName": "PrimeBrew",
+  "version": "0.1.0",
+  "description": "TizenBrew mod for Prime Video on Samsung Tizen TVs.",
+  "packageType": "mods",
+  "websiteURL": "https://www.primevideo.com",
+  "main": "userScript.js",
+  "keys": [
+    "MediaPlayPause",
+    "MediaPlay",
+    "MediaPause",
+    "MediaStop",
+    "MediaFastForward",
+    "MediaRewind",
+    "MediaTrackNext",
+    "MediaTrackPrevious"
+  ],
+  "files": ["userScript.js"],
+  "scripts": {
+    "test": "node --check userScript.js"
+  },
+  "repository": {
+    "url": "https://github.com/TheSmuks/primebrew"
+  },
+  "license": "MIT"
+}
