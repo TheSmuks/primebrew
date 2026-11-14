@@ -45,7 +45,8 @@
       s.src = SHAKA;
       s.onload = function () {
         shaka.polyfill.installAll();
-        navigator.requestMediaKeySystemAccess('com.microsoft.playready', [{
+        // Finish this check before Shaka counts as ready: the first open() configures DRM from it.
+        var drmCheck = navigator.requestMediaKeySystemAccess('com.microsoft.playready', [{
           videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.640028"' }]
         }]).then(function () { hasPlayReady = true; }, function () { console.warn('[PrimeBrew TV] no PlayReady'); });
         // The app, not us, holds the session that fetches licenses: hand the challenge over.
@@ -58,7 +59,7 @@
             send('license_request', { request: encodeURIComponent(btoa(bin)) });
           }));
         });
-        resolve();
+        drmCheck.then(resolve);
       };
       s.onerror = function () { shakaReady = null; reject(new Error('cannot load Shaka Player')); };
       (document.head || document.documentElement).appendChild(s);

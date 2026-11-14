@@ -61,6 +61,17 @@ on every launch. The 5-second badge shows the running version and whether the de
 The launcher is signed with the Tizen SDK public distributor cert, which developer-mode TVs
 before Tizen 7 accept. Tizen 7+ needs a Samsung cert: TizenBrew Installer re-signs it for you.
 
+### Driving the TV from an AI agent (MCP)
+
+`tools/tv_mcp.py` is a dependency-free MCP server over the same tools: `tv_screen` (what's on
+screen as text, focus, video state), `tv_logs`, `tv_eval`, `tv_keys`, `tv_launch`,
+`tv_restart_tizenbrew`, `tv_status`, `tv_info`. If the TV is on another network, point
+`PRIMEBREW_SSH` at a host on its LAN that has the tools in `~/primebrew-tools`:
+
+```sh
+claude mcp add primebrew-tv -e PRIMEBREW_SSH=myhost -- python3 tools/tv_mcp.py
+```
+
 ### No typing on the TV
 
 `tools/tvremote.py` drives the TV over LAN (`pip install websockets`; pair once with "Allow").
