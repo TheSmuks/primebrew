@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>PrimeBrew</title></head>
+<body style="margin:0;background:#0f171e;color:#fff;font:32px sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
+<div id="msg">Starting PrimeBrew…</div>
+<script>
+// Hands off to TizenBrew, which opens the PrimeBrew module (TizenBrew's documented app-control hook).
+// moduleName must match the module as added in TizenBrew: gh/TheSmuks/primebrew (no @tag).
+var TIZENBREW = 'xvvl3S1bvH.TizenBrewStandalone';
+var MODULE = { moduleName: 'TheSmuks/primebrew', moduleType: 'gh' };
+
+function fail(text) {
+  document.getElementById('msg').textContent = text + ' (press Back to exit)';
+  document.addEventListener('keydown', function (e) {
+    if (e.keyCode === 10009) tizen.application.getCurrentApplication().exit();
+  });
+}
+
+try {
+  tizen.application.launchAppControl(
+    new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/view', null, null, null,
+      [new tizen.ApplicationControlData('module', [JSON.stringify(MODULE)])]),
+    TIZENBREW,
+    function () { tizen.application.getCurrentApplication().exit(); },
+    function (e) { fail('Could not open TizenBrew: ' + e.message + '. Is TizenBrew installed?'); }
+  );
+} catch (e) {
+  fail('Could not open TizenBrew: ' + e.message);
+}
+</script>
+</body>
+</html>

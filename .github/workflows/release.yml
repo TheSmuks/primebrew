@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+
+      - run: npm test
+
+      - name: Build and sign launcher
+        env:
+          TIZEN_AUTHOR_P12: ${{ secrets.TIZEN_AUTHOR_P12 }}
+          AUTHOR_PW: ${{ secrets.TIZEN_AUTHOR_PW }}
+        run: |
+          echo "$TIZEN_AUTHOR_P12" | base64 -d > "$RUNNER_TEMP/author.p12"
+          AUTHOR_P12="$RUNNER_TEMP/author.p12" launcher/build.sh
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/PrimeBrew.wgt --generate-notes
+
+      # TizenBrew loads the unpinned module (gh/<owner>/<repo>) through jsDelivr; drop its cache.
+      - name: Purge jsDelivr
+        run: |
+          for f in package.json userScript.js; do
+            curl -sf "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}/$f" > /dev/null
+          done

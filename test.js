@@ -17,4 +17,7 @@ assert.strictEqual(pickNext(from, rects, 'down'), 1);
 assert.strictEqual(pickNext(from, rects, 'left'), 2);
 assert.strictEqual(pickNext(from, rects, 'up'), 3);
 assert.strictEqual(pickNext(from, [box(100, 100)], 'right'), -1); // nothing that way
+// The on-screen badge must show the released version.
+const src = require('fs').readFileSync(__dirname + '/userScript.js', 'utf8');
+assert.ok(src.includes(`var VERSION = '${require('./package.json').version}'`), 'VERSION out of sync with package.json');
 console.log('ok');

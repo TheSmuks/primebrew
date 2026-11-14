@@ -1,7 +1,8 @@
 # PrimeBrew
 
 TizenBrew mod for Prime Video, in the spirit of TizenTube. It opens `https://www.primevideo.com`
-and makes it usable with a TV remote.
+and makes it usable with a TV remote. A small launcher app puts a **PrimeBrew** icon on the TV
+home screen that opens straight into it.
 
 ## Remote controls
 
@@ -14,25 +15,33 @@ and makes it usable with a TV remote.
 
 ## Install on the TV
 
-TizenBrew fetches modules through jsDelivr, which only serves **public** GitHub repos and **public**
-npm packages.
+Needs TizenBrew, with the TV's developer-mode Host PC IP set to `127.0.0.1`.
 
-- **GitHub**: TizenBrew → Module Manager → Add GitHub module → `TheSmuks/primebrew@v0.2.0`
-  (pin a tag; a bare branch is cached by jsDelivr for hours).
-- **npm**: `npm publish`, then Add NPM module → `primebrew`.
-- **Anywhere else**: change `name`/`repository` in `package.json`, push, add `<you>/<repo>@<tag>`.
+1. **Mod**: TizenBrew → Module Manager → Add GitHub module → `TheSmuks/primebrew`
+   (no `@tag`: the launcher opens the module by this exact name, and jsDelivr serves the latest release).
+2. **Launcher** (optional, home-screen icon): TizenBrew Installer → install from GitHub →
+   `TheSmuks/primebrew` (uses the latest release's `PrimeBrew.wgt`). Or over sdb:
+   `sdb push PrimeBrew.wgt /home/owner/share/tmp/sdk_tools/ && sdb shell 0 vd_appinstall PrimeBrew1 /home/owner/share/tmp/sdk_tools/PrimeBrew.wgt`
 
-No typing on the TV: `tools/tvremote.py` drives the TV over LAN (pair once with "Allow"). Open
-the add-module field on the TV, then `python3 tools/tvremote.py text:TheSmuks/primebrew@v0.2.0`.
-Requires `pip install websockets`. Sign in to Prime the same way: select the field on the TV,
-run `tvremote.py text:-` and type (hidden). `hold:KEY_POWER:5` does a full reboot.
+The launcher is signed with the Tizen SDK public distributor cert, which developer-mode TVs
+before Tizen 7 accept. Tizen 7+ needs a Samsung cert: TizenBrew Installer re-signs it for you.
+
+### No typing on the TV
+
+`tools/tvremote.py` drives the TV over LAN (`pip install websockets`; pair once with "Allow"):
+select a text field on the TV, then `tvremote.py text:-` and type it (hidden). Works for the
+module name and for the Prime sign-in. `hold:KEY_POWER:5` does a full reboot.
 
 ## Release
 
 ```sh
-npm test                      # syntax check + navigation test
-npm version minor             # bumps version, commits, tags
-git push --follow-tags        # then add <user>/primebrew@<new tag> on the TV
+npm test                      # syntax check, navigation test, version sync
+npm version minor             # bump package.json, then set the same VERSION in userScript.js
+git push && git push --tags   # CI signs PrimeBrew.wgt, attaches it to the release, purges jsDelivr
 ```
 
-Keep `VERSION` in `userScript.js` in sync: the 5 s badge tells you which build loaded.
+CI needs two repo secrets: `TIZEN_AUTHOR_P12` (base64 of the author `.p12`) and
+`TIZEN_AUTHOR_PW`. Keep the same author cert forever: the TV only accepts launcher updates
+signed by the cert that installed it. Forks: make your own with
+`npx github:reisxd/tizen.js create-tizen-cert --name <you> --password <pw> --output author.p12`.
+Local build: `AUTHOR_P12=… AUTHOR_PW=… launcher/build.sh`.
