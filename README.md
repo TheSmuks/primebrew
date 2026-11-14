@@ -13,6 +13,11 @@ streams the app opens with [Shaka Player](https://github.com/shaka-project/shaka
 relays PlayReady license requests back to the app, which fetches licenses with your session.
 It also maps the Samsung remote's Back and Play/Pause keys, which the app doesn't know.
 
+**Ad skipping (TV mode):** the app knows where its server-inserted ads are (its playback
+timeline). `tv.js` reads that timeline, and when playback reaches an ad break it jumps to the end
+of the whole break in one seek, however many ads are chained. Because playback crossed the
+break, the app counts the ads as watched and doesn't pull you back.
+
 The website mode below (`userScript.js` on www.primevideo.com) is kept as a fallback.
 
 ## Website mode: remote controls

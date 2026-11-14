@@ -150,6 +150,51 @@
     }
   }
 
+  // Ad skipping. Ads are spliced into the stream (server-side), and the app knows where: it
+  // logs each playback timeline ("timeline received {...}"). We rebuild its ad-inclusive
+  // positions the way PlayerTimelineManager#buildTimelineMetadata does (items in order, each
+  // endTime - startTime long; Advertisement/AdTransition items are ads) and jump to the end of
+  // a break when playback reaches it. Playback (not a user seek) crossing an ad makes the app
+  // mark it watched, so it doesn't pull us back; a user seek past an ad gets redirected to the
+  // ad by the app, we skip it, and the app then resumes the seek to its reserved position.
+  var adRanges = [];
+  function onTimeline(tl) {
+    var ranges = [], pos = 0, items = tl.items || [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it.timeUnit !== 'ContentMillis' || it.startTime === null || it.endTime === null) break;
+      var type = (tl.contentInfos[it.contentId] || {}).contentType, dur = (it.endTime - it.startTime) / 1000;
+      if (type === 'Advertisement' || type === 'AdTransition') {
+        var last = ranges[ranges.length - 1];
+        if (last && Math.abs(last[1] - pos) < 0.01) last[1] = pos + dur; else ranges.push([pos, pos + dur]);
+      }
+      pos += dur;
+    }
+    adRanges = window.__primebrewAds = ranges;
+    if (ranges.length) console.log('[PrimeBrew TV] ad breaks: ' + JSON.stringify(ranges));
+  }
+  ['log', 'info'].forEach(function (level) {
+    var orig = console[level];
+    console[level] = function (msg) {
+      var k = typeof msg === 'string' && msg.indexOf('[UxTimelineManager#onTimelineChange] timeline received ') === 0 ? 55 : -1;
+      if (k > 0) { try { onTimeline(JSON.parse(msg.slice(k))); } catch (e) { console.warn('[PrimeBrew TV] timeline: ' + e); } }
+      return orig.apply(console, arguments);
+    };
+  });
+  function skipAds() {
+    if (!video || !loaded || video.seeking || !adRanges.length) return;
+    var t = video.currentTime;
+    for (var i = 0; i < adRanges.length; i++) {
+      var r = adRanges[i];
+      if (t >= r[0] - 0.3 && t < r[1] - 0.5) {
+        console.log('[PrimeBrew TV] skipping ad break ' + r[0].toFixed(1) + '-' + r[1].toFixed(1) + 's');
+        video.currentTime = r[1] + 0.05;
+        return;
+      }
+    }
+  }
+  setInterval(skipAds, 250);
+
   // The app's key map has no Samsung Back (10009) or Play/Pause (10252): translate them into
   // keys it knows (Backspace = BACK; Play 415 / Pause 19).
   function remapKey(e) {
