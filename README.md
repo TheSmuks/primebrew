@@ -24,7 +24,8 @@ npm packages.
 
 No typing on the TV: `tools/tvremote.py` drives the TV over LAN (pair once with "Allow"). Open
 the add-module field on the TV, then `python3 tools/tvremote.py text:TheSmuks/primebrew@v0.2.0`.
-Requires `pip install websockets`.
+Requires `pip install websockets`. Sign in to Prime the same way: select the field on the TV,
+run `tvremote.py text:-` and type (hidden). `hold:KEY_POWER:5` does a full reboot.
 
 ## Release
 
