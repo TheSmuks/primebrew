@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.8.3';
+  var VERSION = '0.8.4';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -51,7 +51,8 @@
     '[data-testid="footer"]{display:none !important}' +
     '#pb-badge{position:fixed;top:20px;right:20px;z-index:2147483647;background:#00a8e1;color:#fff;' +
     'font:20px sans-serif;padding:10px 18px;border-radius:8px;pointer-events:none}';
-  (document.head || document.documentElement).appendChild(style);
+  function addStyle() { (document.head || document.documentElement).appendChild(style); }
+  if (document.documentElement) addStyle(); else document.addEventListener('DOMContentLoaded', addStyle);
 
   function visible(el) {
     var r = el.getBoundingClientRect();
@@ -239,6 +240,35 @@
       poll();
     });
   })();
+
+  // Screenshot for tools/tv_mcp.py: no TV API captures the screen, so draw the page ourselves
+  // (html2canvas renders the DOM; a video frame goes underneath when it can be read, which DRM
+  // video can't by design). Resolves to a JPEG data URL.
+  window.__primebrewShot = function (scale) {
+    scale = scale || 0.5;
+    var ready = window.html2canvas ? Promise.resolve() : new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+      s.onload = res; s.onerror = function () { rej(new Error('cannot load html2canvas')); };
+      (document.head || document.documentElement).appendChild(s);
+    });
+    return ready.then(function () {
+      var w = innerWidth * scale, h = innerHeight * scale, c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      var g = c.getContext('2d'), note = '';
+      g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+      var v = document.querySelector('video');
+      if (v && v.videoWidth) {
+        try { g.drawImage(v, 0, 0, w, h); g.getImageData(0, 0, 1, 1); note = 'video frame drawn'; }
+        catch (e) { note = 'video not readable: ' + e.name; }
+      }
+      return html2canvas(document.body, { scale: 1, width: innerWidth, height: innerHeight, backgroundColor: null, useCORS: true, logging: false,
+        ignoreElements: function (el) { return el.tagName === 'VIDEO'; } }).then(function (ui) {
+        g.drawImage(ui, 0, 0, w, h);
+        return { note: note, image: c.toDataURL('image/jpeg', 0.7) };
+      });
+    });
+  };
 
   var badge = document.createElement('div');
   badge.id = 'pb-badge';

@@ -126,11 +126,12 @@
     loaded = false;
     // Ruby fetches natively; from this https page an http:// stream would be blocked as
     // mixed content. Amazon's CDNs serve the same paths over https.
-    url = https(String(url));
+    url = window.__primebrewUrl = https(String(url));
     loadShaka().then(function () {
       ensureVideo();
       if (player) return player.load(url, startSec || 0);
       player = new shaka.Player(video);
+      window.__primebrewPlayer = player; // for tools/tv_mcp.py (tv_eval)
       player.addEventListener('error', function (ev) { fail(ev.detail); });
       player.getNetworkingEngine().registerResponseFilter(function (type, response) {
         if (type !== shaka.net.NetworkingEngine.RequestType.MANIFEST) return;

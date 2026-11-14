@@ -55,6 +55,21 @@ def evaljs(js):
     return run(['python3', 'tvdebug.py', 'evalfile', '-'], stdin=js)
 
 
+def screenshot(args):
+    js = 'window.__primebrewShot(%s)' % float(args.get('scale', 0.5))
+    out = evaljs(js)
+    try:
+        res = json.loads(out)
+        b64 = res['image'].split(',', 1)[1]
+    except Exception:
+        return [{'type': 'text', 'text': 'screenshot failed: ' + out[:500]}]
+    path = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'primebrew-tv-screen.jpg')
+    with open(path, 'wb') as f:
+        f.write(__import__('base64').b64decode(b64))
+    return [{'type': 'image', 'data': b64, 'mimeType': 'image/jpeg'},
+            {'type': 'text', 'text': 'saved %s (%s). Drawn from the page: the real video plane and DRM video are not capturable.' % (path, res.get('note') or 'no video')}]
+
+
 def logs(args):
     out = run(['python3', 'tvdebug.py', 'logs'])
     lines = [l for l in out.splitlines() if not l.startswith('    at ')]
@@ -78,6 +93,8 @@ TOOLS_DEF = [
     ('tv_screen', 'What is on the TV screen: URL, focused element, video state, ad breaks, visible text.', {}, lambda a: evaljs(SCREEN_JS)),
     ('tv_keys', 'Press remote keys, e.g. ["KEY_DOWN","KEY_ENTER","wait:2","KEY_RETURN"] (KEY_RETURN = Back). Also text:STR.',
      {'keys': {'type': 'array', 'items': {'type': 'string'}}}, lambda a: run(['python3', 'tvremote.py'] + a['keys'], timeout=120)),
+    ('tv_screenshot', 'Picture of the PrimeBrew UI on the TV, rendered from the page (DRM video shows as black).',
+     {'scale': {'type': 'number', 'description': 'size relative to 1920x1080 (default 0.5)'}}, screenshot),
     ('tv_launch', 'Open PrimeBrew on the TV (via its launcher app).', {}, lambda a: tv_rest('POST', 'applications/' + APP)),
     ('tv_restart_tizenbrew', 'Close TizenBrew and reopen PrimeBrew (reloads the mod).', {},
      lambda a: tv_rest('DELETE', 'applications/' + TIZENBREW) + ' ' + (__import__('time').sleep(3) or tv_rest('POST', 'applications/' + APP))),
@@ -101,8 +118,10 @@ def handle(msg):
         if not fn:
             return {'content': [{'type': 'text', 'text': 'unknown tool ' + name}], 'isError': True}
         try:
-            text = fn(args)
-            return {'content': [{'type': 'text', 'text': text or '(no output)'}], 'isError': text.startswith('exit ')}
+            res = fn(args)
+            if isinstance(res, list):
+                return {'content': res}
+            return {'content': [{'type': 'text', 'text': res or '(no output)'}], 'isError': res.startswith('exit ')}
         except Exception as e:
             return {'content': [{'type': 'text', 'text': '%s: %s' % (type(e).__name__, e)}], 'isError': True}
     if m == 'ping':
