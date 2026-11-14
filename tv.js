@@ -220,15 +220,45 @@
 
   // Ruby fetches natively, so the app hands out http:// URLs (subtitles, streams); from this
   // https page those are blocked as mixed content. Amazon's CDNs serve the same over https.
-  function https(url) { return typeof url === 'string' ? url.replace(/^http:\/\//, 'https://') : url; }
+  // Never local addresses: the PrimeBrew debug service is plain http on 127.0.0.1.
+  function https(url) {
+    return typeof url === 'string' && !/^http:\/\/(127\.0\.0\.1|localhost)[:\/]/.test(url) ? url.replace(/^http:\/\//, 'https://') : url;
+  }
+  // Amazon's config for this device type says "deviceTier":"Tier-3", which turns off every UI
+  // animation (Tier 1 = all, Tier 2 = core, Tier 3/4 = none). The TV handles more: ask for Tier 2
+  // (Tier 1 also autoplays trailers while browsing).
+  var TIER = 'Tier-2';
+  function patchConfig(url, text) {
+    return /\/acm\/GetConfiguration\//.test(url) ? text.replace(/"deviceTier":"Tier-\d"/g, '"deviceTier":"' + TIER + '"') : text;
+  }
   var origFetch = window.fetch;
-  window.fetch = function (input, init) { return origFetch.call(this, typeof input === 'string' ? https(input) : input, init); };
+  window.fetch = function (input, init) {
+    var url = typeof input === 'string' ? https(input) : input;
+    var p = origFetch.call(this, url, init);
+    if (typeof url !== 'string' || !/\/acm\/GetConfiguration\//.test(url)) return p;
+    return p.then(function (r) {
+      return r.text().then(function (t) {
+        return new Response(patchConfig(url, t), { status: r.status, statusText: r.statusText, headers: r.headers });
+      });
+    });
+  };
   var origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url) {
     var args = [].slice.call(arguments);
     args[1] = https(url);
+    this.__pbUrl = args[1];
     return origOpen.apply(this, args);
   };
+  ['responseText', 'response'].forEach(function (prop) {
+    var d = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, prop);
+    Object.defineProperty(XMLHttpRequest.prototype, prop, {
+      configurable: true,
+      get: function () {
+        var v = d.get.call(this);
+        return typeof v === 'string' && this.__pbUrl && /\/acm\/GetConfiguration\//.test(this.__pbUrl) ? patchConfig(this.__pbUrl, v) : v;
+      }
+    });
+  });
 
   // The app's key map has no Samsung Back (10009) or Play/Pause (10252): translate them into
   // keys it knows (Backspace = BACK; Play 415 / Pause 19).
