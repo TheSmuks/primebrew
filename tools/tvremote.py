@@ -2,7 +2,7 @@
 """Drive a Samsung Tizen TV over its LAN remote API (port 8002).
 
 usage: tvremote.py [--ip IP] keyboard
-         interactive: arrows/Enter/Esc(=Back) drive the TV; typed or pasted text replaces
+         interactive remote + keyboard (key list printed on start); typed or pasted text replaces
          the open TV text field (select it on the TV first); Backspace deletes; Ctrl-C quits.
        tvremote.py [--ip IP] ACTION...
          ACTION = KEY_xxx | text:STRING | text:- (prompt, hidden) | hold:KEY_xxx:SECONDS | wait:SECONDS
@@ -14,8 +14,16 @@ import websockets
 
 TOKEN_FILE = pathlib.Path(__file__).with_name('.tv-token')
 KEYMAP = {'\x1b[A': 'KEY_UP', '\x1b[B': 'KEY_DOWN', '\x1b[C': 'KEY_RIGHT', '\x1b[D': 'KEY_LEFT',
-          '\x1b': 'KEY_RETURN', '\r': 'KEY_ENTER', '\n': 'KEY_ENTER', '\r\n': 'KEY_ENTER'}
-TOKENS = re.compile(r'\x1b\[[A-D]|\x1b\[[0-9;]*[~A-Za-z]|\x1b|\r\n|\r|\n|\x7f|\x03|[^\x1b\r\n\x7f\x03]+')
+          '\x1b': 'KEY_RETURN', '\r': 'KEY_ENTER', '\n': 'KEY_ENTER', '\r\n': 'KEY_ENTER',
+          '\t': 'DONE',
+          # F1-F4 come as \x1bOP.. (xterm) or \x1b[11~.. (others)
+          '\x1bOP': 'KEY_HOME', '\x1b[11~': 'KEY_HOME', '\x1bOQ': 'KEY_PLAY', '\x1b[12~': 'KEY_PLAY',
+          '\x1bOR': 'KEY_PAUSE', '\x1b[13~': 'KEY_PAUSE', '\x1bOS': 'KEY_REWIND', '\x1b[14~': 'KEY_REWIND',
+          '\x1b[15~': 'KEY_FF', '\x1b[17~': 'KEY_VOLDOWN', '\x1b[18~': 'KEY_VOLUP', '\x1b[19~': 'KEY_MUTE'}
+HELP = ('arrows move · Enter = OK · Esc = Back · Tab = Done (close TV keyboard)\r\n'
+        'F1 Home · F2 Play · F3 Pause · F4 Rewind · F5 FF · F6 Vol- · F7 Vol+ · F8 Mute\r\n'
+        'type/paste = text into the selected TV field · Backspace deletes · Ctrl-C quits\r\n')
+TOKENS = re.compile(r'\x1bO.|\x1b\[[0-9;]*[~A-Za-z]|\x1b|\r\n|[\r\n\t\x7f\x03]|[^\x1b\r\n\t\x7f\x03]+')
 
 
 def payload(action, cmd='Click'):
@@ -87,7 +95,7 @@ async def keyboard(ws):
     old = termios.tcgetattr(fd)
     tty.setraw(fd)
     loop.add_reader(fd, lambda: keys.put_nowait(os.read(fd, 4096).decode(errors='ignore')))
-    print('keyboard mode: arrows/Enter/Esc(Back) drive the TV, type or paste text, Ctrl-C quits\r')
+    sys.stdout.write(HELP)
     status()
     try:
         while True:
@@ -95,7 +103,9 @@ async def keyboard(ws):
                 if tok == '\x03':
                     return
                 if tok in KEYMAP:
-                    await send(ws, payload(KEYMAP[tok]))
+                    # SendInputEnd = the TV keyboard's "Done" button.
+                    await send(ws, {'TypeOfRemote': 'SendInputEnd'} if KEYMAP[tok] == 'DONE'
+                               else payload(KEYMAP[tok]))
                     field = ''
                     status(KEYMAP[tok])
                 elif tok.startswith('\x1b'):
