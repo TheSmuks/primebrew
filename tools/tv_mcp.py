@@ -7,7 +7,7 @@ it (the tools must be in PRIMEBREW_TOOLS there, default ~/primebrew-tools).
 
   claude mcp add primebrew-tv -e PRIMEBREW_SSH=myhost -- python3 /path/to/tools/tv_mcp.py
 """
-import json, os, shlex, subprocess, sys, urllib.request
+import json, os, shlex, subprocess, sys, time, urllib.request
 
 SSH = os.environ.get('PRIMEBREW_SSH', '')
 TOOLS = os.environ.get('PRIMEBREW_TOOLS', '~/primebrew-tools' if SSH else os.path.dirname(os.path.abspath(__file__)))
@@ -35,7 +35,7 @@ def run(argv, stdin=None, timeout=60):
                'bash -c ' + shlex.quote('cd ' + TOOLS + ' && ' + ' '.join(shlex.quote(a) for a in argv))]
     else:
         cmd = argv
-        if argv[0] == 'python3':
+        if argv[0] == 'python3' and argv[1].endswith('.py'):
             cmd = ['python3', os.path.join(TOOLS, argv[1])] + argv[2:]
     p = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=timeout)
     out = (p.stdout + ('\n' + p.stderr if p.stderr.strip() else '')).strip()
@@ -49,6 +49,123 @@ def tv_rest(method, path):
     req = urllib.request.Request('http://%s:8001/api/v2/%s' % (TV_IP, path), method=method)
     with urllib.request.urlopen(req, timeout=5) as r:
         return r.read().decode()
+
+
+def power_state():
+    # 'on' / 'standby' (network standby: REST answers, screen off) / 'off' (unreachable)
+    try:
+        return json.loads(tv_rest('GET', ''))['device'].get('PowerState', 'on')
+    except Exception:
+        return 'off'
+
+
+def page_seen():
+    # (service clock now, page last seen) in ms, or None if the debug service isn't up.
+    try:
+        st = json.loads(run(['python3', 'tvdebug.py', 'status'], timeout=20))
+        # A connected page sits in a 25 s long poll: while it waits, it is "seen" right now.
+        return st['now'], st['now'] if st.get('pageWaiting') else (st.get('pageSeenAt') or 0)
+    except Exception:
+        return None
+
+
+def page_age():
+    # Seconds since the PrimeBrew page last polled the debug service (None: no service/page).
+    try:
+        st = json.loads(run(['python3', 'tvdebug.py', 'status'], timeout=20))
+        return (st['now'] - st['pageSeenAt']) / 1000 if st.get('pageSeenAt') else None
+    except Exception:
+        return None
+
+
+def wait(cond, timeout, step=5):
+    end = time.time() + timeout
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(step)
+    return False
+
+
+MAC_CACHE = os.path.expanduser('~/.cache/primebrew-tv-mac')
+
+
+def tv_mac():
+    mac = os.environ.get('PRIMEBREW_TV_MAC')
+    if not mac:
+        try:
+            mac = json.loads(tv_rest('GET', ''))['device']['wifiMac']
+            os.makedirs(os.path.dirname(MAC_CACHE), exist_ok=True)
+            open(MAC_CACHE, 'w').write(mac)
+        except Exception:
+            mac = open(MAC_CACHE).read().strip() if os.path.exists(MAC_CACHE) else None
+    return mac
+
+
+def wake():
+    mac = tv_mac()
+    if not mac:
+        return 'no MAC known (set PRIMEBREW_TV_MAC)'
+    code = ("import socket;m=bytes.fromhex('%s'.replace(':',''));p=b'\\xff'*6+m*16;"
+            "s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.setsockopt(socket.SOL_SOCKET,socket.SO_BROADCAST,1);"
+            "[s.sendto(p,('255.255.255.255',9)) for _ in range(3)]") % mac
+    return run(['python3', '-c', code]) or 'magic packet sent'
+
+
+def tv_power(args):
+    action = args.get('action', 'status')
+    if action == 'on':
+        if power_state() == 'on':
+            return 'already on'
+        r = wake()
+        return r + ('; on' if wait(lambda: power_state() == 'on', 60) else '; still not on after 60 s')
+    if action == 'off':
+        if power_state() != 'on':
+            return 'already off'
+        run(['python3', 'tvremote.py', 'KEY_POWER'])
+        return 'off' if wait(lambda: power_state() != 'on', 30) else 'still on'
+    if action == 'restart':
+        # A 5 s Power hold reboots the TV fully (clears TizenBrew's in-memory caches).
+        if power_state() != 'on':
+            wake()
+            wait(lambda: power_state() == 'on', 60)
+        # A 5 s Power hold sometimes reboots, sometimes only sends the TV to standby: if it
+        # isn't back on its own within 2 min, wake it with Wake-on-LAN.
+        run(['python3', 'tvremote.py', 'hold:KEY_POWER:5'])
+        wait(lambda: power_state() != 'on', 30, 2)
+        if wait(lambda: power_state() == 'on', 120):
+            return 'rebooted, on'
+        wake()
+        if wait(lambda: power_state() == 'on', 60):
+            return 'went to standby instead of rebooting; woken with Wake-on-LAN (TizenBrew caches may survive)'
+        return 'did not come back on: needs a manual power cycle'
+    return power_state()
+
+
+def tv_reset(args):
+    # Fresh PrimeBrew page with the latest release: reload the page in place. TizenBrew re-injects
+    # the mod into the new page and the loader fetches the latest release again.
+    # Deliberately no app relaunching: a cold TizenBrew start opens its auto-launch module (e.g.
+    # TizenTube) instead of the launcher's request in practice, which disrupts the TV.
+    if power_state() != 'on':
+        return 'TV is not on (tv_power on to wake it).'
+    before = page_seen()
+    if not before or before[0] - before[1] > 30000:
+        return ('PrimeBrew is not open on the TV (page not seen for %s). Ask the user to open it; '
+                'relaunching TizenBrew from here tends to open its auto-launch module instead.'
+                % ('ever' if not before or not before[1] else '%d s' % ((before[0] - before[1]) / 1000)))
+    old_line = logs({'filter': r'PrimeBrew \d', 'last': 1})
+    evaljs('setTimeout(function () { location.reload(); }, 300); "reloading"')
+    # The new page announces itself with a fresh "PrimeBrew <version> on <url>" line.
+    if wait(lambda: logs({'filter': r'PrimeBrew \d', 'last': 1}) not in ('', old_line), 60, 3):
+        return 'reloaded; ' + logs({'filter': r'PrimeBrew \d', 'last': 1})
+    return 'reload sent, but the page did not reconnect within 60 s'
+
+
+def tv_apps(args):
+    app, action = args.get('app', APP), args.get('action', 'status')
+    method = {'status': 'GET', 'launch': 'POST', 'close': 'DELETE'}[action]
+    return tv_rest(method, 'applications/' + app)
 
 
 def evaljs(js):
@@ -83,7 +200,14 @@ def logs(args):
 
 
 TOOLS_DEF = [
-    ('tv_status', 'PrimeBrew debug service state on the TV (is the page connected?).', {}, lambda a: run(['python3', 'tvdebug.py', 'status'])),
+    ('tv_status', 'PrimeBrew debug service state on the TV (is the page connected?).', {},
+     lambda a: 'power: %s, page last seen: %s s ago\n%s' % (power_state(), page_age(), run(['python3', 'tvdebug.py', 'status']))),
+    ('tv_reset', 'Reload the PrimeBrew page in place (fresh page, latest release) and wait for it to reconnect. Needs PrimeBrew already open on the TV.',
+     {}, tv_reset),
+    ('tv_power', 'TV power: action = status | on (Wake-on-LAN) | off | restart (full reboot via 5 s Power hold).',
+     {'action': {'type': 'string', 'enum': ['status', 'on', 'off', 'restart']}}, tv_power),
+    ('tv_apps', 'Query, launch or close a TV app by id (default PrimeBrew launcher). TizenBrew is ' + TIZENBREW + '.',
+     {'app': {'type': 'string'}, 'action': {'type': 'string', 'enum': ['status', 'launch', 'close']}}, tv_apps),
     ('tv_logs', 'Console output from the PrimeBrew page on the TV (newest last).',
      {'filter': {'type': 'string', 'description': 'regex to keep matching lines'},
       'last': {'type': 'integer', 'description': 'how many lines (default 60)'},
@@ -95,8 +219,8 @@ TOOLS_DEF = [
      {'keys': {'type': 'array', 'items': {'type': 'string'}}}, lambda a: run(['python3', 'tvremote.py'] + a['keys'], timeout=120)),
     ('tv_screenshot', 'Picture of the PrimeBrew UI on the TV, rendered from the page (DRM video shows as black).',
      {'scale': {'type': 'number', 'description': 'size relative to 1920x1080 (default 0.5)'}}, screenshot),
-    ('tv_launch', 'Open PrimeBrew on the TV (via its launcher app).', {}, lambda a: tv_rest('POST', 'applications/' + APP)),
-    ('tv_restart_tizenbrew', 'Close TizenBrew and reopen PrimeBrew (reloads the mod).', {},
+    ('tv_launch', 'Open PrimeBrew via its launcher. Only reliable when TizenBrew is not running; a cold TizenBrew may open its auto-launch module (TizenTube) instead.', {}, lambda a: tv_rest('POST', 'applications/' + APP)),
+    ('tv_restart_tizenbrew', 'Close TizenBrew and reopen PrimeBrew. Unreliable: usually opens the auto-launch module (TizenTube). Prefer tv_reset.', {},
      lambda a: tv_rest('DELETE', 'applications/' + TIZENBREW) + ' ' + (__import__('time').sleep(3) or tv_rest('POST', 'applications/' + APP))),
     ('tv_info', 'TV power state, model and running state of TizenBrew.', {},
      lambda a: tv_rest('GET', '') + '\n' + tv_rest('GET', 'applications/' + TIZENBREW)),

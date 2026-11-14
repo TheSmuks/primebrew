@@ -64,8 +64,11 @@ before Tizen 7 accept. Tizen 7+ needs a Samsung cert: TizenBrew Installer re-sig
 ### Driving the TV from an AI agent (MCP)
 
 `tools/tv_mcp.py` is a dependency-free MCP server over the same tools: `tv_screen` (what's on
-screen as text, focus, video state), `tv_logs`, `tv_eval`, `tv_keys`, `tv_launch`,
-`tv_restart_tizenbrew`, `tv_status`, `tv_info`. If the TV is on another network, point
+screen as text, focus, video state), `tv_screenshot` (the UI rendered from the page; video
+planes and DRM video can't be captured), `tv_logs`, `tv_eval`, `tv_keys`, `tv_reset` (reload
+the PrimeBrew page with the latest release), `tv_power` (Wake-on-LAN / off / restart),
+`tv_apps`, `tv_status`, `tv_info`. Set `PRIMEBREW_TV_MAC` for Wake-on-LAN. Launching PrimeBrew
+from outside is unreliable when TizenBrew has an auto-launch module: it usually wins. If the TV is on another network, point
 `PRIMEBREW_SSH` at a host on its LAN that has the tools in `~/primebrew-tools`:
 
 ```sh
