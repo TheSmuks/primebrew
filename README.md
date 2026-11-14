@@ -28,8 +28,10 @@ before Tizen 7 accept. Tizen 7+ needs a Samsung cert: TizenBrew Installer re-sig
 
 ### No typing on the TV
 
-`tools/tvremote.py` drives the TV over LAN (`pip install websockets`; pair once with "Allow"):
-select a text field on the TV, then `tvremote.py text:-` and type it (hidden). Works for the
+`tools/tvremote.py` drives the TV over LAN (`pip install websockets`; pair once with "Allow").
+`tvremote.py keyboard` turns your computer keyboard into the remote: arrows/Enter/Esc (Back)
+drive the TV, and typed or pasted text goes into the selected TV text field. For secrets,
+`tvremote.py text:-` prompts without echo. Works for the
 module name and for the Prime sign-in. `hold:KEY_POWER:5` does a full reboot.
 
 ## Release
