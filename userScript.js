@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.4.0';
+  var VERSION = '0.5.0';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -68,7 +68,7 @@
     current = el;
     el.classList.add('pb-focus');
     el.focus();
-    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' }); // smooth scroll stutters on TV chipsets
     lastRect = el.getBoundingClientRect();
   }
 
@@ -100,6 +100,16 @@
     else v.currentTime += action === 'ff' ? 10 : -10;
   }
 
+  // Back on the first page leaves the app, like a native one (history.back() would do nothing).
+  function back() {
+    var before = location.href;
+    history.back();
+    setTimeout(function () {
+      if (location.href !== before) return;
+      try { tizen.application.getCurrentApplication().exit(); } catch (e) { console.warn('[PrimeBrew] cannot exit: ' + e); }
+    }, 600);
+  }
+
   window.addEventListener('keydown', function (e) {
     var k = e.keyCode, dir = KEYS[k], v = playerVideo();
     var typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
@@ -110,7 +120,7 @@
     else if (k === BACK) {
       if (typing) document.activeElement.blur();
       else if (v && current) { current.classList.remove('pb-focus'); current = null; } // back to seek mode
-      else history.back();
+      else back();
     }
     else if (dir && !(typing && (dir === 'left' || dir === 'right'))) { move(dir); }
     else if (k === ENTER && current && !typing) { current.click(); }
