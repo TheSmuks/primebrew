@@ -1,10 +1,10 @@
 {
   "name": "primebrew",
   "appName": "PrimeBrew",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "TizenBrew mod for Prime Video on Samsung Tizen TVs.",
   "packageType": "mods",
-  "websiteURL": "https://www.primevideo.com",
+  "websiteURL": "https://atv-ext-eu.amazon.com/blast-app-hosting/html5/index.html?deviceTypeID=A1MWYRS2QVQH2N",
   "main": "loader.js",
   "serviceFile": "service.js",
   "keys": [
@@ -17,9 +17,9 @@
     "MediaTrackNext",
     "MediaTrackPrevious"
   ],
-  "files": ["loader.js", "userScript.js", "service.js"],
+  "files": ["loader.js", "tv.js", "userScript.js", "service.js"],
   "scripts": {
-    "test": "node --check loader.js && node --check userScript.js && node --check service.js && node test.js"
+    "test": "node --check loader.js && node --check tv.js && node --check userScript.js && node --check service.js && node test.js"
   },
   "repository": {
     "url": "https://github.com/TheSmuks/primebrew"

@@ -38,6 +38,6 @@ jobs:
       # TizenBrew loads the unpinned module (gh/<owner>/<repo>) through jsDelivr; drop its cache.
       - name: Purge jsDelivr
         run: |
-          for f in package.json loader.js userScript.js; do
+          for f in package.json loader.js tv.js userScript.js; do
             curl -sf "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}/$f" > /dev/null
           done

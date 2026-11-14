@@ -1,10 +1,21 @@
 # PrimeBrew
 
-TizenBrew mod for Prime Video, in the spirit of TizenTube. It opens `https://www.primevideo.com`
-and makes it usable with a TV remote. A small launcher app puts a **PrimeBrew** icon on the TV
-home screen that opens straight into it.
+TizenBrew mod for Prime Video, in the spirit of TizenTube. It runs **Amazon's own TV app**
+(the living-room UI other smart TVs load from `atv-ext-eu.amazon.com/blast-app-hosting`), with
+QR / `primevideo.com/mytv` code sign-in and full remote navigation. A small launcher app puts a
+**PrimeBrew** icon on the TV home screen that opens straight into it.
 
-## Remote controls
+## How TV mode works
+
+Amazon's TV app expects a native player bridge ("Hawaii"/Ruby) from the TV maker's firmware.
+`tv.js` provides one in JavaScript: it answers the app's device/version queries, plays the DASH
+streams the app opens with [Shaka Player](https://github.com/shaka-project/shaka-player), and
+relays PlayReady license requests back to the app, which fetches licenses with your session.
+It also maps the Samsung remote's Back and Play/Pause keys, which the app doesn't know.
+
+The website mode below (`userScript.js` on www.primevideo.com) is kept as a fallback.
+
+## Website mode: remote controls
 
 | Key | Browsing | In the player |
 | --- | --- | --- |
