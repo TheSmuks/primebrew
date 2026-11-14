@@ -1,7 +1,7 @@
 {
   "name": "primebrew",
   "appName": "PrimeBrew",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "TizenBrew mod for Prime Video on Samsung Tizen TVs.",
   "packageType": "mods",
   "websiteURL": "https://atv-ext-eu.amazon.com/blast-app-hosting/html5/index.html?deviceTypeID=A1MWYRS2QVQH2N",
