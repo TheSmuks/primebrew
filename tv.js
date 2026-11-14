@@ -79,6 +79,24 @@
     p.resolve({ uri: p.uri, originalUri: p.uri, data: buf.buffer, headers: {} });
   }
 
+  // Amazon's manifests carry bare DRM init data in <cenc:pssh> (a PlayReady object / Widevine
+  // PSSH payload), not the full 'pssh' box DASH specifies; Ruby copes, a browser CDM rejects
+  // it ("Initialization data for CENC is incorrect"). Wrap each payload in a proper box.
+  function psshBox(systemId, b64) {
+    var bin = atob(b64.replace(/\s+/g, ''));
+    if (bin.substr(4, 4) === 'pssh') return b64; // already a box
+    var size = 32 + bin.length, head = String.fromCharCode(size >>> 24 & 255, size >>> 16 & 255, size >>> 8 & 255, size & 255) + 'pssh\0\0\0\0';
+    var id = systemId.replace(/-/g, '');
+    for (var i = 0; i < 32; i += 2) head += String.fromCharCode(parseInt(id.substr(i, 2), 16));
+    var n = bin.length;
+    return btoa(head + String.fromCharCode(n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255) + bin);
+  }
+  function fixManifest(xml) {
+    return xml.replace(/(<ContentProtection\b[^>]*schemeIdUri="urn:uuid:([0-9a-fA-F-]{36})"[^>]*>\s*<cenc:pssh>)([^<]+)(<\/cenc:pssh>)/g,
+      function (all, open, id, data, close) { return open + psshBox(id, data) + close; });
+  }
+  window.__primebrewFixManifest = fixManifest; // for tests
+
   function ensureVideo() {
     if (video) return video;
     video = document.createElement('video');
@@ -97,8 +115,9 @@
   function sendTime() { if (video) send('playback_time', { playback_time: video.currentTime }); }
 
   function fail(e) {
-    var code = (e && e.code) || 1000;
-    console.error('[PrimeBrew TV] player error ' + code + ': ' + (e && (e.message || JSON.stringify(e.data))));
+    var code = (e && e.code) || 1000, data = '';
+    try { data = JSON.stringify(e && e.data, function (k, v) { return v && v.byteLength !== undefined ? '[' + v.byteLength + ' bytes]' : v && v.message ? v.name + ': ' + v.message : v; }); } catch (x) {}
+    console.error('[PrimeBrew TV] player error ' + code + ': ' + (e && e.message) + ' ' + String(data).slice(0, 1000));
     send('error', { code: code, message: 'PrimeBrew player error ' + code });
   }
 
@@ -106,12 +125,16 @@
     loaded = false;
     // Ruby fetches natively; from this https page an http:// stream would be blocked as
     // mixed content. Amazon's CDNs serve the same paths over https.
-    url = String(url).replace(/^http:/, 'https:');
+    url = https(String(url));
     loadShaka().then(function () {
       ensureVideo();
       if (player) return player.load(url, startSec || 0);
       player = new shaka.Player(video);
       player.addEventListener('error', function (ev) { fail(ev.detail); });
+      player.getNetworkingEngine().registerResponseFilter(function (type, response) {
+        if (type !== shaka.net.NetworkingEngine.RequestType.MANIFEST) return;
+        response.data = new TextEncoder().encode(fixManifest(new TextDecoder().decode(response.data))).buffer;
+      });
       // Only ask for PlayReady where it exists (the TV); demanding a missing key system makes
       // Shaka drop every variant, clear trailers included.
       if (hasPlayReady) player.configure({ drm: { servers: { 'com.microsoft.playready': 'primebrew-license://app' } } });
@@ -194,6 +217,18 @@
     }
   }
   setInterval(skipAds, 250);
+
+  // Ruby fetches natively, so the app hands out http:// URLs (subtitles, streams); from this
+  // https page those are blocked as mixed content. Amazon's CDNs serve the same over https.
+  function https(url) { return typeof url === 'string' ? url.replace(/^http:\/\//, 'https://') : url; }
+  var origFetch = window.fetch;
+  window.fetch = function (input, init) { return origFetch.call(this, typeof input === 'string' ? https(input) : input, init); };
+  var origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url) {
+    var args = [].slice.call(arguments);
+    args[1] = https(url);
+    return origOpen.apply(this, args);
+  };
 
   // The app's key map has no Samsung Back (10009) or Play/Pause (10252): translate them into
   // keys it knows (Backspace = BACK; Play 415 / Pause 19).

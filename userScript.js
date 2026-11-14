@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.7.0';
+  var VERSION = '0.8.0';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -198,10 +198,10 @@
     var parts = [];
     for (var i = 0; i < args.length; i++) {
       var a = args[i];
-      try { parts.push(typeof a === 'string' ? a : a instanceof Error ? a.stack || String(a) : JSON.stringify(a)); }
-      catch (e) { parts.push(String(a)); }
+      // Cheap on purpose: Amazon's TV app logs a lot, and serializing every object costs UI time.
+      parts.push(typeof a === 'string' ? a : a instanceof Error ? a.stack || String(a) : String(a));
     }
-    logBuf.push({ level: level, msg: parts.join(' ') });
+    if (logBuf.length < 500) logBuf.push({ level: level, msg: parts.join(' ').slice(0, 2000) });
   }
 
   ['log', 'info', 'warn', 'error'].forEach(function (level) {
