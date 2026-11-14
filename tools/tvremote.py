@@ -6,6 +6,7 @@ usage: tvremote.py [--ip IP] keyboard
          the open TV text field (select it on the TV first); Backspace deletes; Ctrl-C quits.
        tvremote.py [--ip IP] ACTION...
          ACTION = KEY_xxx | text:STRING | text:- (prompt, hidden) | hold:KEY_xxx:SECONDS | wait:SECONDS
+                | open:APP_ID[:URL] (e.g. open:org.tizen.browser:https://example.com)
          e.g. hold:KEY_POWER:5 = full reboot (needed after changing developer-mode Host PC IP)
 First run pops an "Allow" dialog on the TV; the token is saved next to this file.
 """
@@ -69,6 +70,12 @@ async def run_actions(ws, actions):
             await send(ws, payload(key, 'Press'))
             await asyncio.sleep(float(secs))
             await send(ws, payload(key, 'Release'))
+        elif a.startswith('open:'):
+            # open:APP_ID[:URL] launches an app, e.g. open:org.tizen.browser:https://example.com
+            app, _, url = a[5:].partition(':')
+            await ws.send(json.dumps({'method': 'ms.channel.emit', 'params': {
+                'event': 'ed.apps.launch', 'to': 'host',
+                'data': {'appId': app, 'action_type': 'NATIVE_LAUNCH', 'metaTag': url}}}))
         elif a == 'text:-':
             await send(ws, payload('text:' + getpass.getpass('text for TV (hidden): ')))
             a = 'text:<hidden>'

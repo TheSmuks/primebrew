@@ -1,31 +1,50 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>PrimeBrew</title></head>
+<head>
+<meta charset="utf-8"><title>PrimeBrew</title>
+<!-- Samsung's product APIs, including the native player (webapis.avplay). -->
+<script src="$WEBAPIS/webapis/webapis.js"></script>
+</head>
 <body style="margin:0;background:#0f171e;color:#fff;font:32px sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
 <div id="msg">Starting PrimeBrew…</div>
 <script>
-// Hands off to TizenBrew, which opens the PrimeBrew module (TizenBrew's documented app-control hook).
-// moduleName must match the module as added in TizenBrew: gh/TheSmuks/primebrew (no @tag).
+// Bootstrap: everything else comes from the latest release (app.js), so this app is installed
+// once and updates itself. If that fails, OK opens the TizenBrew module instead.
+var REPO = 'TheSmuks/primebrew';
 var TIZENBREW = 'xvvl3S1bvH.TizenBrewStandalone';
 var MODULE = { moduleName: 'TheSmuks/primebrew', moduleType: 'gh' };
 
+function exit() { tizen.application.getCurrentApplication().exit(); }
+function openTizenBrew() {
+  tizen.application.launchAppControl(
+    new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/view', null, null, null,
+      [new tizen.ApplicationControlData('module', [JSON.stringify(MODULE)])]),
+    TIZENBREW, exit, function (e) { show('Could not open TizenBrew: ' + e.message); });
+}
+function show(text) { document.getElementById('msg').textContent = text; }
 function fail(text) {
-  document.getElementById('msg').textContent = text + ' (press Back to exit)';
+  show(text + ' — OK: open the TizenBrew version · Back: exit');
   document.addEventListener('keydown', function (e) {
-    if (e.keyCode === 10009) tizen.application.getCurrentApplication().exit();
+    if (e.keyCode === 13) openTizenBrew();
+    if (e.keyCode === 10009) exit();
   });
 }
 
 try {
-  tizen.application.launchAppControl(
-    new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/view', null, null, null,
-      [new tizen.ApplicationControlData('module', [JSON.stringify(MODULE)])]),
-    TIZENBREW,
-    function () { tizen.application.getCurrentApplication().exit(); },
-    function (e) { fail('Could not open TizenBrew: ' + e.message + '. Is TizenBrew installed?'); }
-  );
+  ['MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaStop', 'MediaFastForward', 'MediaRewind']
+    .forEach(function (k) { try { tizen.tvinputdevice.registerKey(k); } catch (e) {} });
+  var base = null, x = new XMLHttpRequest();
+  // jsDelivr's unpinned URL lags new releases: pin the latest GitHub release instead.
+  x.open('GET', 'https://api.github.com/repos/' + REPO + '/releases/latest', false);
+  try { x.send(); base = 'https://cdn.jsdelivr.net/gh/' + REPO + '@' + JSON.parse(x.responseText).tag_name + '/'; } catch (e) {}
+  window.__primebrewBase = base || 'https://cdn.jsdelivr.net/gh/' + REPO + '/';
+  var a = new XMLHttpRequest();
+  a.open('GET', window.__primebrewBase + 'app.js', false);
+  a.send();
+  if (a.status !== 200) throw new Error('app.js HTTP ' + a.status);
+  (0, eval)(a.responseText);
 } catch (e) {
-  fail('Could not open TizenBrew: ' + e.message);
+  fail('PrimeBrew could not start (' + e.message + ')');
 }
 </script>
 </body>

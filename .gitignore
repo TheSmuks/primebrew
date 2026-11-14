@@ -1,3 +1,4 @@
 .tv-token
 dist/
 debug.key
+__pycache__/

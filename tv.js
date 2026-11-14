@@ -1,8 +1,9 @@
 // PrimeBrew TV mode: runs Amazon's hosted living-room (TV) app by standing in for the native
 // "Hawaii"/Ruby player bridge the official TV apps provide. The app talks JSON messages
 // ({cmd, params}) to the bridge; we answer device/version queries and play the DASH streams
-// it opens with Shaka Player, relaying PlayReady license requests back to the app (which
-// fetches licenses with the signed-in session). ES5: Tizen 6.5 runs Chromium 85.
+// it opens, relaying PlayReady license requests back to the app (which fetches licenses with
+// the signed-in session). Two players: Samsung's native AVPlay when the page has Tizen APIs (our
+// own app, launcher/), else Shaka Player over MSE/EME (TizenBrew). ES5 on purpose.
 (function () {
   if (typeof window === 'undefined' || window.top !== window || window.hawaii) return;
 
@@ -113,7 +114,7 @@
     return video;
   }
 
-  function sendTime() { if (video) send('playback_time', { playback_time: video.currentTime }); }
+  function sendTime() { if (loaded) send('playback_time', { playback_time: backend().time() }); }
 
   function fail(e) {
     var code = (e && e.code) || 1000, data = '';
@@ -122,55 +123,177 @@
     send('error', { code: code, message: 'PrimeBrew player error ' + code });
   }
 
+  // ---- Shaka backend (TizenBrew: a remote page without Tizen APIs) ----
+  var SHAKA_BACKEND = {
+    name: 'shaka',
+    init: function () { return loadShaka(); },
+    open: function (url, startSec) {
+      // From an https page an http:// stream is blocked as mixed content; Amazon's CDNs serve
+      // the same paths over https.
+      url = window.__primebrewUrl = https(String(url));
+      loadShaka().then(function () {
+        ensureVideo();
+        if (player) return player.load(url, startSec || 0);
+        player = new shaka.Player(video);
+        window.__primebrewPlayer = player; // for tools/tv_mcp.py (tv_eval)
+        player.addEventListener('error', function (ev) { fail(ev.detail); });
+        player.getNetworkingEngine().registerResponseFilter(function (type, response) {
+          if (type !== shaka.net.NetworkingEngine.RequestType.MANIFEST) return;
+          response.data = new TextEncoder().encode(fixManifest(new TextDecoder().decode(response.data))).buffer;
+        });
+        // Only ask for PlayReady where it exists (the TV); demanding a missing key system makes
+        // Shaka drop every variant, clear trailers included.
+        if (hasPlayReady) player.configure({ drm: { servers: { 'com.microsoft.playready': 'primebrew-license://app' } } });
+        report('manifest_requested');
+        return player.load(url, startSec || 0);
+      }).then(function () {
+        loaded = true;
+        if (wantPlay) video.play().catch(function () {});
+        report('manifest_obtained');
+        report('metadata', { duration: video.duration, uid: 0 });
+        var t = player.getVariantTracks().filter(function (x) { return x.active; })[0];
+        if (t) report('video_frame_quality_level_change', { bitrate: t.videoBandwidth || t.bandwidth, width: t.width, height: t.height });
+      }).catch(fail);
+    },
+    play: function () { video.play().catch(function () {}); },
+    pause: function () { if (video) video.pause(); },
+    seek: function (sec) { if (video) video.currentTime = sec; },
+    stop: function () { if (video) { video.pause(); setState('stopped'); } },
+    shutdown: function (done) {
+      var fin = function () {
+        if (video && video.parentNode) video.parentNode.removeChild(video);
+        video = null; player = null; done();
+      };
+      if (player) player.destroy().then(fin, fin); else fin();
+    },
+    license: onLicense,
+    time: function () { return video ? video.currentTime : 0; },
+    paused: function () { return !video || video.paused; },
+    busy: function () { return !video || video.seeking; }
+  };
+
+  // ---- AVPlay backend (our own Tizen app: Samsung's native player) ----
+  // The TV's browser DRM path (EME) decodes protected video as garbage on this TV, in every app;
+  // AVPlay is what native apps use. PlayReady "GenChallenge" mode hands us the license challenge
+  // so the app can fetch the license with its session, then we install it.
+  var av = null, avObj = null, avSeeking = false, avLastTime = 0;
+  function avState() { try { return av.getState(); } catch (e) { return 'NONE'; } }
+  var AVPLAY_BACKEND = {
+    name: 'avplay',
+    init: function () { return Promise.resolve(); },
+    open: function (url, startSec) {
+      try { av.stop(); } catch (e) {}
+      try { av.close(); } catch (e) {}
+      if (!avObj) {
+        avObj = document.createElement('object');
+        avObj.type = 'application/avplayer';
+        avObj.id = 'primebrew-avplayer';
+        avObj.style.cssText = 'position:fixed;left:0;top:0;width:1920px;height:1080px;z-index:-1';
+      }
+      if (!avObj.parentNode) document.body.appendChild(avObj);
+      // AVPlay draws on the video plane under the page: keep the page itself see-through.
+      document.documentElement.style.background = document.body.style.background = 'transparent';
+      window.__primebrewUrl = url = String(url);
+      try {
+        av.open(url);
+        av.setDisplayRect(0, 0, 1920, 1080); // always in 1920x1080 coordinates
+        av.setListener({
+          onbufferingstart: function () { setState('buffering'); },
+          onbufferingcomplete: function () { setState(avState() === 'PLAYING' ? 'playing' : 'paused'); },
+          oncurrentplaytime: function (ms) {
+            avLastTime = ms / 1000;
+            if (avState() === 'PLAYING') setState('playing');
+          },
+          onstreamcompleted: function () { setState('stopped'); },
+          onerror: function (type) { fail({ code: 3002, message: 'AVPlay error ' + type }); },
+          onevent: function (type, data) { console.log('[PrimeBrew TV] AVPlay event ' + type + ' ' + String(data).slice(0, 200)); },
+          ondrmevent: function (type, data) {
+            if (data && data.name === 'Challenge') {
+              // The app wants base64 of the challenge: pass it as is, or encode raw XML.
+              var ch = String(data.challenge || '');
+              report('playready_license_requested');
+              send('license_request', { request: encodeURIComponent(ch.charAt(0) === '<' ? btoa(ch) : ch) });
+            } else {
+              console.warn('[PrimeBrew TV] AVPlay drm event ' + type + ' ' + JSON.stringify(data).slice(0, 300));
+              if (data && data.name === 'DrmError') fail({ code: 3003, message: 'DRM ' + data.code + ' ' + data.message });
+            }
+          }
+        });
+        // The docs spell the option both ways; send both.
+        av.setDrm('PLAYREADY', 'SetProperties', JSON.stringify({ DeleteLicenseAfterUse: true, GenChallenge: true, GetChallenge: true }));
+      } catch (e) { return fail({ code: 3000, message: 'AVPlay open: ' + e }); }
+      report('manifest_requested');
+      av.prepareAsync(function () {
+        loaded = true;
+        report('manifest_obtained');
+        report('metadata', { duration: av.getDuration() / 1000, uid: 0 });
+        var go = function () { if (wantPlay) { av.play(); setState('playing'); } else setState('paused'); };
+        if (startSec > 0) av.seekTo(startSec * 1000, go, go); else go();
+      }, function (e) { fail({ code: 3001, message: 'AVPlay prepare: ' + e }); });
+    },
+    play: function () { av.play(); setState('playing'); },
+    pause: function () { av.pause(); setState('paused'); },
+    seek: function (sec) {
+      avSeeking = true;
+      var done = function () { avSeeking = false; avLastTime = sec; sendTime(); };
+      av.seekTo(Math.max(0, sec * 1000), done, done);
+    },
+    stop: function () { try { av.stop(); } catch (e) {} setState('stopped'); },
+    shutdown: function (done) {
+      try { av.stop(); } catch (e) {}
+      try { av.close(); } catch (e) {}
+      if (avObj && avObj.parentNode) avObj.parentNode.removeChild(avObj);
+      done();
+    },
+    license: function (response) {
+      if (!response || /^dumm/.test(response)) return fail({ code: 3004, message: 'no license from app' });
+      try {
+        av.setDrm('PLAYREADY', 'InstallLicense', response);
+        report('playready_license_acquired');
+      } catch (e) { fail({ code: 3005, message: 'InstallLicense: ' + e }); }
+    },
+    time: function () { try { return av.getCurrentTime() / 1000; } catch (e) { return avLastTime; } },
+    paused: function () { return avState() !== 'PLAYING'; },
+    busy: function () { return avSeeking || !loaded; }
+  };
+
+  var B = null;
+  function backend() {
+    if (!B) {
+      av = window.webapis && window.webapis.avplay;
+      B = av ? AVPLAY_BACKEND : SHAKA_BACKEND;
+      console.log('[PrimeBrew TV] player: ' + B.name);
+    }
+    return B;
+  }
+  // Leaving the app (Home) must release the hardware player; coming back restores it.
+  document.addEventListener('visibilitychange', function () {
+    if (!av || !loaded) return;
+    try { if (document.hidden) av.suspend(); else av.restore(); } catch (e) {}
+  });
+
+  var timeTimerOn = false;
   function open(url, startSec) {
     loaded = false;
-    // Ruby fetches natively; from this https page an http:// stream would be blocked as
-    // mixed content. Amazon's CDNs serve the same paths over https.
-    url = window.__primebrewUrl = https(String(url));
-    loadShaka().then(function () {
-      ensureVideo();
-      if (player) return player.load(url, startSec || 0);
-      player = new shaka.Player(video);
-      window.__primebrewPlayer = player; // for tools/tv_mcp.py (tv_eval)
-      player.addEventListener('error', function (ev) { fail(ev.detail); });
-      player.getNetworkingEngine().registerResponseFilter(function (type, response) {
-        if (type !== shaka.net.NetworkingEngine.RequestType.MANIFEST) return;
-        response.data = new TextEncoder().encode(fixManifest(new TextDecoder().decode(response.data))).buffer;
-      });
-      // Only ask for PlayReady where it exists (the TV); demanding a missing key system makes
-      // Shaka drop every variant, clear trailers included.
-      if (hasPlayReady) player.configure({ drm: { servers: { 'com.microsoft.playready': 'primebrew-license://app' } } });
-      report('manifest_requested');
-      return player.load(url, startSec || 0);
-    }).then(function () {
-      loaded = true;
-      if (wantPlay) video.play().catch(function () {});
-      report('manifest_obtained');
-      report('metadata', { duration: video.duration, uid: 0 });
-      var t = player.getVariantTracks().filter(function (x) { return x.active; })[0];
-      if (t) report('video_frame_quality_level_change', { bitrate: t.videoBandwidth || t.bandwidth, width: t.width, height: t.height });
-      if (!timeTimer) timeTimer = setInterval(function () { if (video && !video.paused) sendTime(); }, 500);
-    }).catch(fail);
+    backend().open(url, startSec);
+    if (!timeTimerOn) { timeTimerOn = true; setInterval(function () { if (loaded && !backend().paused()) sendTime(); }, 500); }
   }
 
   function shutdown() {
-    clearInterval(timeTimer); timeTimer = null;
-    var done = function () {
-      if (video && video.parentNode) video.parentNode.removeChild(video);
-      video = null; player = null; lastState = ''; loaded = wantPlay = false;
+    backend().shutdown(function () {
+      lastState = ''; loaded = wantPlay = false;
       send('shutdown_complete');
-    };
-    if (player) player.destroy().then(done, done); else done();
+    });
   }
 
   function control(p) {
     switch (p.call_function) {
       case 'open': open(p.function_param, p.start_time_seconds); break;
       // The app sends play right after open, before the stream has loaded: remember it.
-      case 'play': wantPlay = true; if (loaded) video.play().catch(function () {}); break;
-      case 'pause': wantPlay = false; if (video) video.pause(); break;
-      case 'seek': if (video) video.currentTime = Number(p.function_param) / 1000; break;
-      case 'stop': if (video) { video.pause(); setState('stopped'); } break;
+      case 'play': wantPlay = true; if (loaded) backend().play(); break;
+      case 'pause': wantPlay = false; if (loaded) backend().pause(); break;
+      case 'seek': if (loaded) backend().seek(Number(p.function_param) / 1000); break;
+      case 'stop': backend().stop(); break;
       case 'shutdown': shutdown(); break;
     }
   }
@@ -207,13 +330,13 @@
     };
   });
   function skipAds() {
-    if (!video || !loaded || video.seeking || !adRanges.length) return;
-    var t = video.currentTime;
+    if (!loaded || !adRanges.length || backend().busy()) return;
+    var t = backend().time();
     for (var i = 0; i < adRanges.length; i++) {
       var r = adRanges[i];
       if (t >= r[0] - 0.3 && t < r[1] - 0.5) {
         console.log('[PrimeBrew TV] skipping ad break ' + r[0].toFixed(1) + '-' + r[1].toFixed(1) + 's');
-        video.currentTime = r[1] + 0.05;
+        backend().seek(r[1] + 0.05);
         return;
       }
     }
@@ -266,7 +389,7 @@
   // keys it knows (Backspace = BACK; Play 415 / Pause 19).
   function remapKey(e) {
     var to = e.keyCode === 10009 ? 8
-      : e.keyCode === 10252 ? (video && !video.paused ? 19 : 415) : 0;
+      : e.keyCode === 10252 ? (loaded && !backend().paused() ? 19 : 415) : 0;
     if (!to) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -275,8 +398,12 @@
     Object.defineProperty(ev, 'which', { get: function () { return to; } });
     (e.target || document).dispatchEvent(ev);
   }
-  window.addEventListener('keydown', remapKey, true);
-  window.addEventListener('keyup', remapKey, true);
+  // document.open() (how our own app loads Amazon's page) erases window listeners: reinstallable.
+  window.__primebrewInstallKeys = function () {
+    window.addEventListener('keydown', remapKey, true);
+    window.addEventListener('keyup', remapKey, true);
+  };
+  window.__primebrewInstallKeys();
 
   window.hawaii = {
     registerMessageListener: function (cb) { listener = cb; },
@@ -289,9 +416,9 @@
         case 'device_description_request': send('device_description', DEVICE); break;
         case 'device_update_request': send('device_update', DEVICE); break;
         case 'version_request': send('version', { major: '2', minor: '5', revision: '0' }); break;
-        case 'player_init': loadShaka().catch(fail); break;
+        case 'player_init': backend().init().catch(fail); break;
         case 'player_control': control(p); break;
-        case 'license_response': onLicense(p.response); break;
+        case 'license_response': backend().license(p.response); break;
       }
       if (window.__primebrewTrace) console.log('[PrimeBrew TV] <- ' + raw.slice(0, 200));
     }

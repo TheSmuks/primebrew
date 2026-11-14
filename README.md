@@ -18,6 +18,13 @@ timeline). `tv.js` reads that timeline, and when playback reaches an ad break it
 of the whole break in one seek, however many ads are chained. Because playback crossed the
 break, the app counts the ads as watched and doesn't pull you back.
 
+**Two ways to run it.** The **PrimeBrew app** (`launcher/`, the home-screen icon) is the main
+one: as an installed Tizen app it can use Samsung's native player (AVPlay), and this TV's browser
+DRM path (EME) decodes protected video as garbage in every app, Samsung's own browser included.
+The app is a tiny bootstrap that loads `app.js` from the latest release, which runs Amazon's TV app
+in the app's own page with `tv.js` on the AVPlay backend. As a **TizenBrew module** (`loader.js`)
+the same bridge uses Shaka Player instead: fine for unencrypted video, not for DRM on such TVs.
+
 The website mode below (`userScript.js` on www.primevideo.com) is kept as a fallback.
 
 ## Website mode: remote controls
