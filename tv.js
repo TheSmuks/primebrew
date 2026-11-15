@@ -225,12 +225,16 @@
     name: 'avplay',
     init: function () { return Promise.resolve(); },
     open: function (url, startSec) {
-      if (!LIC) return findLicenseRelay(function (u) {
-        LIC = u || 'none';
-        trace('license relay ' + LIC);
-        if (u) licensePoll();
-        AVPLAY_BACKEND.open(url, startSec);
-      });
+      // The relay lives in TizenBrew's service, which may still be starting (app launch): retry ~30 s.
+      if (!LIC) return (function attempt(n) {
+        findLicenseRelay(function (u) {
+          if (!u && n < 10) return setTimeout(function () { attempt(n + 1); }, 3000);
+          LIC = u || 'none';
+          trace('license relay ' + LIC);
+          if (u) licensePoll();
+          AVPLAY_BACKEND.open(url, startSec);
+        });
+      })(0);
       if (LIC === 'none') LIC = null;
       try { av.stop(); } catch (e) {}
       try { av.close(); } catch (e) {}

@@ -21,8 +21,14 @@
     (0, eval)(x.responseText);
   }
 
-  // Debug channel: TizenBrew's background service runs our service.js; a packaged app can't
-  // reach loopback, so the debug client talks to it on the TV's own LAN address.
+  // TizenBrew's background service runs our service.js (debug channel, license relay for
+  // AVPlay, manifest proxy); it's in TizenBrew's auto-start list. Make sure it's running even when
+  // TizenBrew itself wasn't opened since the TV started. A packaged app can't reach loopback, so
+  // the page talks to it on the TV's own LAN address.
+  try {
+    tizen.application.launchAppControl(new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/service'),
+      'xvvl3S1bvH.StandaloneService', function () {}, function (e) { step('TizenBrew service: ' + e.message); });
+  } catch (e) { step('TizenBrew service: ' + e); }
   try { window.__primebrewDebugHost = webapis.network.getIp(); } catch (e) {}
 
   step('app.js start; debug host ' + window.__primebrewDebugHost);

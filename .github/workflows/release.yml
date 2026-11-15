@@ -34,7 +34,7 @@ jobs:
       # make sure jsDelivr serves them before the release (and so "latest") exists.
       - name: Wait for jsDelivr
         run: |
-          for f in app.js tv.js userScript.js service.js; do
+          for f in app.js tv.js userScript.js service.js service-core.js; do
             for i in $(seq 30); do
               curl -sf -o /dev/null "https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@${GITHUB_REF_NAME}/$f" && break
               sleep 10
@@ -49,6 +49,6 @@ jobs:
       # TizenBrew loads the unpinned module (gh/<owner>/<repo>) through jsDelivr; drop its cache.
       - name: Purge jsDelivr
         run: |
-          for f in package.json loader.js app.js tv.js userScript.js; do
+          for f in package.json loader.js app.js tv.js userScript.js service.js service-core.js; do
             curl -sf "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}/$f" > /dev/null
           done
