@@ -17,34 +17,12 @@
     (0, eval)(x.responseText);
   }
 
-  // Debug channel without TizenBrew's UI: start TizenBrew's background service app if needed,
-  // then ask it (its local WebSocket, like TizenBrew's UI does) to run our service.js, which
-  // the page's debug client (userScript.js) talks to on 127.0.0.1:8787.
-  (function debugService() {
-    var tag = (/@([^\/]+)\//.exec(BASE) || [])[1];
-    var fullName = 'gh/TheSmuks/primebrew' + (tag ? '@' + tag : '');
-    function start(retry) {
-      var ws = new WebSocket('ws://127.0.0.1:8081');
-      ws.onopen = function () {
-        ws.send(JSON.stringify({ type: 6, payload: { fullName: fullName, name: 'primebrew', serviceFile: 'service.js' } }));
-        setTimeout(function () { ws.close(); }, 2000);
-      };
-      ws.onerror = function () {
-        if (!retry) return;
-        try {
-          tizen.application.launchAppControl(
-            new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/service'),
-            'xvvl3S1bvH.StandaloneService',
-            function () { setTimeout(function () { start(false); }, 4000); },
-            function (e) { console.warn('[PrimeBrew] cannot start TizenBrew service: ' + e.message); });
-        } catch (e) { console.warn('[PrimeBrew] no TizenBrew service: ' + e); }
-      };
-    }
-    start(true);
-  })();
+  // Debug channel: TizenBrew's background service runs our service.js; a packaged app can't
+  // reach loopback, so the debug client talks to it on the TV's own LAN address.
+  try { window.__primebrewDebugHost = webapis.network.getIp(); } catch (e) {}
 
   load('tv.js');
-  load('userScript.js'); // debug channel (via TizenBrew's service on 127.0.0.1:8787 when it runs)
+  load('userScript.js'); // debug client, badge
 
   // The app's "exit" is window.close(); in a Tizen app that has to be an application exit.
   window.close = function () { try { tizen.application.getCurrentApplication().exit(); } catch (e) {} };

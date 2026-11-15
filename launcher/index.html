@@ -21,7 +21,20 @@ function openTizenBrew() {
       [new tizen.ApplicationControlData('module', [JSON.stringify(MODULE)])]),
     TIZENBREW, exit, function (e) { show('Could not open TizenBrew: ' + e.message); });
 }
-function show(text) { document.getElementById('msg').textContent = text; }
+// Startup steps go to the PrimeBrew debug service (TizenBrew's, when it runs) for remote debugging.
+function report(level, text) {
+  var host = '127.0.0.1';
+  try { host = webapis.network.getIp(); } catch (e) {} // apps can't reach loopback; LAN address works
+  [8787, 8788, 8789].forEach(function (port) {
+    try {
+      var r = new XMLHttpRequest();
+      r.open('POST', 'http://' + host + ':' + port + '/page/log');
+      r.send(JSON.stringify([{ level: level, msg: '[PrimeBrew app] ' + text }]));
+    } catch (e) {}
+  });
+}
+window.onerror = function (m, f, l) { report('error', m + ' @ ' + f + ':' + l); };
+function show(text) { document.getElementById('msg').textContent = text; report('info', 'screen: ' + text); }
 function fail(text) {
   show(text + ' — OK: open the TizenBrew version · Back: exit');
   document.addEventListener('keydown', function (e) {
@@ -30,6 +43,7 @@ function fail(text) {
   });
 }
 
+report('info', 'bootstrap start; webapis=' + typeof window.webapis + ' tizen=' + typeof window.tizen);
 try {
   ['MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaStop', 'MediaFastForward', 'MediaRewind']
     .forEach(function (k) { try { tizen.tvinputdevice.registerKey(k); } catch (e) {} });
@@ -38,9 +52,11 @@ try {
   x.open('GET', 'https://api.github.com/repos/' + REPO + '/releases/latest', false);
   try { x.send(); base = 'https://cdn.jsdelivr.net/gh/' + REPO + '@' + JSON.parse(x.responseText).tag_name + '/'; } catch (e) {}
   window.__primebrewBase = base || 'https://cdn.jsdelivr.net/gh/' + REPO + '/';
+  report('info', 'github ' + x.status + ' -> ' + window.__primebrewBase);
   var a = new XMLHttpRequest();
   a.open('GET', window.__primebrewBase + 'app.js', false);
   a.send();
+  report('info', 'app.js ' + a.status + ' ' + (a.responseText || '').length + ' bytes');
   if (a.status !== 200) throw new Error('app.js HTTP ' + a.status);
   (0, eval)(a.responseText);
 } catch (e) {

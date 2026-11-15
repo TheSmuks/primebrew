@@ -38,9 +38,14 @@ function readBody(req, cb) {
   req.on('end', function () { cb(Buffer.concat(chunks).toString('utf8')); });
 }
 
+// The page is on this TV. Loopback, or (our packaged app can't reach loopback) the TV's own
+// LAN address.
 function isLocal(req) {
-  var a = req.socket.remoteAddress || '';
-  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+  var a = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  if (a === '127.0.0.1' || a === '::1') return true;
+  var ifs = require('os').networkInterfaces();
+  for (var k in ifs) for (var i = 0; i < ifs[k].length; i++) if (ifs[k][i].address === a) return true;
+  return false;
 }
 
 function verify(req, body) {
@@ -72,6 +77,7 @@ function log(level, msg) {
 }
 
 function pageRoute(req, res, path, body) {
+  if (path === '/page/ping') return send(res, 204); // lets the page find a current service
   pageSeenAt = Date.now();
   if (req.method === 'GET' && path === '/page/next') {
     if (pageWaiter) { clearTimeout(pageWaiter.timer); send(pageWaiter.res, 204); }
@@ -155,10 +161,10 @@ var server = http.createServer(function (req, res) {
     }
   });
 });
-// A newer copy can be started next to an older one still holding 8787 (TizenBrew keeps services
-// in memory until the TV restarts): then take 8788.
+// A newer copy can be started next to older ones still holding 8787 (TizenBrew keeps services
+// in memory until the TV restarts): then take the next port, up to 8789.
 server.on('error', function (e) {
-  if (e.code === 'EADDRINUSE' && PORT === 8787) { PORT = 8788; server.listen(PORT, '0.0.0.0'); }
+  if (e.code === 'EADDRINUSE' && PORT < 8789) { PORT++; server.listen(PORT, '0.0.0.0'); }
   else log('error', 'server: ' + e);
 });
 server.on('listening', function () { log('info', 'PrimeBrew debug service listening on ' + PORT); });

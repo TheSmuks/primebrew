@@ -33,7 +33,7 @@ SNAPSHOT = r"""(function () {
 })()"""
 
 
-def request(ip, key, method, path, body='', port=8787):
+def request(ip, key, method, path, body='', port=8787, timeout=40):
     ts = str(int(time.time() * 1000))
     sig = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', key],
                          input=f'{ts}\n{method} {path}\n{body}'.encode(), capture_output=True, check=True).stdout
@@ -42,7 +42,7 @@ def request(ip, key, method, path, body='', port=8787):
                                  headers={'X-PB-TS': ts, 'X-PB-Sig': base64.b64encode(sig).decode(),
                                           'Content-Type': 'text/plain'})
     try:
-        with urllib.request.urlopen(req, timeout=40) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()
     except urllib.error.HTTPError as e:
         sys.exit(f'HTTP {e.code}: {e.read().decode()}')
@@ -51,8 +51,8 @@ def request(ip, key, method, path, body='', port=8787):
     return json.loads(data) if data else None
 
 
-def run_js(ip, key, js):
-    res = request(ip, key, 'POST', '/cmd', js)
+def run_js(ip, key, js, port=8787):
+    res = request(ip, key, 'POST', '/cmd', js, port)
     out = res.get('value')
     print(out if isinstance(out, str) else json.dumps(out, indent=1, ensure_ascii=False))
     if not res.get('ok'):
@@ -68,29 +68,40 @@ def main(argv):
             key = argv[1]
         argv = argv[2:]
     cmd, rest = (argv[0], argv[1:]) if argv else ('', [])
+    # Several service copies may run (8787-8789, TizenBrew keeps old ones until a TV restart):
+    # page commands go to the one the page talks to (most recently seen page).
+    port, best = 8787, -1
+    for p in (8787, 8788, 8789):
+        try:
+            st = request(ip, key, 'GET', '/status', port=p, timeout=5)
+        except SystemExit:
+            continue
+        seen = st['now'] if st.get('pageWaiting') else st.get('pageSeenAt', 0)
+        if seen > best:
+            port, best = p, seen
 
     if cmd == 'status':
-        print(json.dumps(request(ip, key, 'GET', '/status'), indent=1))
+        print(json.dumps(dict(request(ip, key, 'GET', '/status', port=port), port=port), indent=1))
     elif cmd == 'logs':
         since = 0
         while True:
-            for entry in request(ip, key, 'GET', f'/logs?since={since}'):
+            for entry in request(ip, key, 'GET', f'/logs?since={since}', port=port):
                 since = entry['t']
                 print(time.strftime('%H:%M:%S', time.localtime(entry['t'] / 1000)), entry['level'], entry['msg'])
             if rest != ['-f']:
                 break
             time.sleep(2)
     elif cmd == 'eval' and rest:
-        run_js(ip, key, ' '.join(rest))
+        run_js(ip, key, ' '.join(rest), port)
     elif cmd == 'evalfile' and rest:
-        run_js(ip, key, sys.stdin.read() if rest[0] == '-' else pathlib.Path(rest[0]).read_text())
+        run_js(ip, key, sys.stdin.read() if rest[0] == '-' else pathlib.Path(rest[0]).read_text(), port)
     elif cmd in ('node', 'nodefile') and rest:
         js = ' '.join(rest) if cmd == 'node' else (sys.stdin.read() if rest[0] == '-' else pathlib.Path(rest[0]).read_text())
         # A newer service may run on 8788 next to an older one on 8787 (which lacks /node).
         res = None
-        for port in (8788, 8787):
+        for port in (8789, 8788, 8787):
             try:
-                res = request(ip, key, 'POST', '/node', js, port)
+                res = request(ip, key, 'POST', '/node', js, port, 125)
                 break
             except SystemExit as e:
                 err = e
@@ -101,7 +112,7 @@ def main(argv):
         if not res.get('ok'):
             sys.exit(1)
     elif cmd == 'snapshot':
-        run_js(ip, key, SNAPSHOT)
+        run_js(ip, key, SNAPSHOT, port)
     else:
         sys.exit(__doc__)
 

@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.9.2';
+  var VERSION = '0.9.3';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -183,7 +183,9 @@
 
   // Debug client: talks to service.js on the TV (127.0.0.1 is allowed from an https page).
   // Ships console output there and evaluates signed commands from tools/tvdebug.py.
-  var DEBUG = 'http://127.0.0.1:8787';
+  // Our packaged app can't reach loopback: app.js passes the TV's LAN address. Several service
+  // copies may run (8787-8789); use the first that knows /page/ping (current ones).
+  var DEBUG_HOST = window.__primebrewDebugHost || '127.0.0.1', DEBUG = 'http://' + DEBUG_HOST + ':8787';
   var logBuf = [];
 
   function xhr(method, path, body, done) {
@@ -225,9 +227,24 @@
     xhr('POST', '/page/result', '{"id":' + id + ',"ok":' + ok + ',"value":' + out + '}');
   }
 
-  (function poll() {
+  function findService(done) {
+    var ports = [8789, 8788, 8787], i = 0;
+    (function next() {
+      if (i >= ports.length) return done(false);
+      var url = 'http://' + DEBUG_HOST + ':' + ports[i++];
+      var x = new XMLHttpRequest();
+      x.open('GET', url + '/page/ping');
+      x.timeout = 3000;
+      x.onload = function () { if (x.status === 204) { DEBUG = url; done(true); } else next(); };
+      x.onerror = x.ontimeout = next;
+      x.send();
+    })();
+  }
+
+  findService(function () { poll(); });
+  function poll() {
     xhr('GET', '/page/next', undefined, function (status, text) {
-      if (status === 0) return setTimeout(poll, 10000); // service not running (yet)
+      if (status === 0) return setTimeout(function () { findService(function () { poll(); }); }, 10000); // service not running (yet)
       if (status === 200) {
         var cmd = JSON.parse(text);
         try {
@@ -239,7 +256,7 @@
       }
       poll();
     });
-  })();
+  }
 
   // Screenshot for tools/tv_mcp.py: no TV API captures the screen, so draw the page ourselves
   // (html2canvas renders the DOM; a video frame goes underneath when it can be read, which DRM
