@@ -79,75 +79,37 @@ function log(level, msg) {
 // License relay for AVPlay (the player in our own app): AVPlay posts its PlayReady challenge to
 // /license like to any license server; the page (tv.js) long-polls /license/next, has Amazon's
 // app fetch the license with the signed-in session, and posts it to /license/response.
-var lic = { avplay: null, challenge: null, pageWaiter: null };
-function licenseRoute(req, res, path, body) {
+// Each player request gets an id; the page answers per id (a PlayReady license is bound to its
+// own challenge). AVPlay gives up after ~10 s and re-requests: both stay open, each gets its own.
+var lic = { seq: 0, open: {}, queue: [], pageWaiter: null };
+function licenseRoute(req, res, path, query, body) {
   if (path === '/license/ping') return send(res, 204);
   if (path === '/license' && req.method === 'POST') {
-    if (lic.avplay) send(lic.avplay.res, 503, { error: 'superseded' });
-    lic.avplay = { res: res, timer: setTimeout(function () { lic.avplay = null; send(res, 504, { error: 'no license from page' }); }, 45000) };
-    lic.challenge = new Buffer(body, 'utf8').toString('base64');
-    log('info', 'license: challenge from player (' + body.length + ' bytes)');
-    if (lic.pageWaiter) { var w = lic.pageWaiter; lic.pageWaiter = null; clearTimeout(w.timer); send(w.res, 200, { challenge: lic.challenge }); lic.challenge = null; }
+    var id = ++lic.seq;
+    lic.open[id] = { res: res, timer: setTimeout(function () { delete lic.open[id]; send(res, 504, { error: 'no license from page' }); }, 60000) };
+    req.on('close', function () { if (lic.open[id]) { clearTimeout(lic.open[id].timer); delete lic.open[id]; } });
+    log('info', 'license: challenge #' + id + ' from player (' + body.length + ' bytes)');
+    lic.queue.push({ id: id, challenge: new Buffer(body, 'utf8').toString('base64') });
+    if (lic.pageWaiter) { var w = lic.pageWaiter; lic.pageWaiter = null; clearTimeout(w.timer); send(w.res, 200, lic.queue.shift()); }
     return;
   }
   if (path === '/license/next') {
-    if (lic.challenge) { send(res, 200, { challenge: lic.challenge }); lic.challenge = null; return; }
+    if (lic.queue.length) return send(res, 200, lic.queue.shift());
     if (lic.pageWaiter) { clearTimeout(lic.pageWaiter.timer); send(lic.pageWaiter.res, 204); }
     lic.pageWaiter = { res: res, timer: setTimeout(function () { lic.pageWaiter = null; send(res, 204); }, 25000) };
     return;
   }
   if (path === '/license/response' && req.method === 'POST') {
-    var a = lic.avplay;
+    var rid = Number((/id=(\d+)/.exec(query) || [])[1]), a = lic.open[rid];
     send(res, 204);
-    if (!a) return log('warn', 'license: response but no player waiting');
-    lic.avplay = null; clearTimeout(a.timer);
+    if (!a) return log('warn', 'license: response #' + rid + ' but that request is gone');
+    delete lic.open[rid]; clearTimeout(a.timer);
     var lic64 = body.trim(), bin = /^</.test(lic64) ? new Buffer(lic64, 'utf8') : new Buffer(lic64, 'base64');
-    log('info', 'license: answering player (' + bin.length + ' bytes)');
+    log('info', 'license: answering #' + rid + ' (' + bin.length + ' bytes)');
     a.res.writeHead(bin.length && lic64 !== 'error' ? 200 : 500, { 'Content-Type': 'text/xml; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
     return a.res.end(bin);
   }
   send(res, 404, { error: 'not found' });
-}
-
-// Manifest proxy for AVPlay: Amazon's manifests carry bare DRM payloads in <cenc:pssh> (no
-// 'pssh' box) and relative BaseURLs; serve a cleaned copy. Options (query): drop=ec-3 removes
-// AdaptationSets with that codec; nopssh=1 removes the <cenc:pssh> elements instead of fixing.
-function psshBox(systemId, b64) {
-  var data = new Buffer(b64.replace(/\s+/g, ''), 'base64');
-  if (data.length > 8 && data.toString('ascii', 4, 8) === 'pssh') return b64;
-  var head = new Buffer(32);
-  head.writeUInt32BE(32 + data.length, 0); head.write('pssh', 4, 'ascii'); head.writeUInt32BE(0, 8);
-  new Buffer(systemId.replace(/-/g, ''), 'hex').copy(head, 12);
-  head.writeUInt32BE(data.length, 28);
-  return Buffer.concat([head, data]).toString('base64');
-}
-function fetchText(url, cb, hops) {
-  var mod = /^https:/.test(url) ? require('https') : require('http');
-  mod.get(url, function (r) {
-    if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && (hops || 0) < 5) return fetchText(require('url').resolve(url, r.headers.location), cb, (hops || 0) + 1);
-    var d = []; r.on('data', function (c) { d.push(c); }); r.on('end', function () { cb(null, r.statusCode, Buffer.concat(d).toString('utf8')); });
-  }).on('error', function (e) { cb(e); });
-}
-function mpdRoute(req, res, query) {
-  var q = require('querystring').parse(query), url = q.u;
-  fetchText(url, function (err, status, xml) {
-    if (err || status !== 200) return send(res, 502, { error: String(err || status) });
-    var dir = url.split('?')[0].replace(/[^\/]*$/, '');
-    xml = xml.replace(/<BaseURL>(?!https?:)([^<]*)<\/BaseURL>/g, function (a, rel) { return '<BaseURL>' + dir + rel + '</BaseURL>'; });
-    if (q.nopssh) xml = xml.replace(/<cenc:pssh>[^<]*<\/cenc:pssh>/g, '');
-    else xml = xml.replace(/(<ContentProtection\b[^>]*schemeIdUri="urn:uuid:([0-9a-fA-F-]{36})"[^>]*>\s*<cenc:pssh>)([^<]+)(<\/cenc:pssh>)/g,
-      function (a, open, id, data, close) { return open + psshBox(id, data) + close; });
-    if (q.drop) {
-      var codecs = q.drop.split(',');
-      xml = xml.replace(/<AdaptationSet\b[\s\S]*?<\/AdaptationSet>/g, function (as) {
-        for (var i = 0; i < codecs.length; i++) if (as.indexOf('codecs="' + codecs[i]) >= 0) return '';
-        return as;
-      });
-    }
-    log('info', 'mpd: served ' + xml.length + ' bytes (' + query.replace(/u=[^&]*/, 'u=..') + ')');
-    res.writeHead(200, { 'Content-Type': 'application/dash+xml', 'Access-Control-Allow-Origin': '*' });
-    res.end(xml);
-  });
 }
 
 function pageRoute(req, res, path, body) {
@@ -231,7 +193,7 @@ var server = http.createServer(function (req, res) {
       }
       if (path === '/license' || path.indexOf('/license/') === 0) {
         if (!isLocal(req)) return send(res, 403, { error: 'license routes are TV-local only' });
-        return licenseRoute(req, res, path, body);
+        return licenseRoute(req, res, path, query, body);
       }
       if (path.indexOf('/page/') === 0) {
         if (!isLocal(req)) return send(res, 403, { error: 'page routes are localhost only' });

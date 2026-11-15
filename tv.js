@@ -196,7 +196,7 @@
       x.send();
     })();
   }
-  var licensePolling = false;
+  var licensePolling = false, licenseIds = [];
   function licensePoll() {
     if (licensePolling || !LIC) return;
     licensePolling = true;
@@ -206,8 +206,9 @@
       x.timeout = 30000;
       x.onload = function () {
         if (x.status === 200) {
-          var ch = JSON.parse(x.responseText).challenge; // base64 of the SOAP challenge
-          trace('license challenge ' + ch.length + ' chars -> app');
+          var m = JSON.parse(x.responseText), ch = m.challenge; // base64 of the SOAP challenge
+          licenseIds.push(m.id); // the app answers license requests in order
+          trace('license challenge #' + m.id + ' (' + ch.length + ' chars) -> app');
           report('playready_license_requested');
           send('license_request', { request: encodeURIComponent(ch) });
         }
@@ -314,8 +315,9 @@
       // Hand the app's license to AVPlay's pending license-server request (the relay).
       var ok = response && !/^dumm/.test(response);
       trace('license from app: ' + (ok ? response.length + ' chars' : 'none'));
-      var x = new XMLHttpRequest();
-      x.open('POST', LIC + '/license/response');
+      var id = licenseIds.shift(), x = new XMLHttpRequest();
+      trace('license for #' + id);
+      x.open('POST', LIC + '/license/response?id=' + id);
       x.send(ok ? response : 'error');
       if (ok) report('playready_license_acquired');
       else fail({ code: 3004, message: 'no license from app' });
