@@ -180,14 +180,58 @@
   function avState() { try { return av.getState(); } catch (e) { return 'NONE'; } }
   function trace(m) { if (window.__primebrewTraceSync) window.__primebrewTraceSync('AVPlay ' + m); }
   // DRM properties for AVPlay; override for experiments: localStorage primebrew_avplay_props.
+  // AVPlay's challenge mode (GetChallenge/GenChallenge) never delivers the challenge on this TV
+  // (and crashes on encrypted-from-the-start streams). So AVPlay gets a normal license server:
+  // our service on the TV, which relays the challenge to this page (see licensePoll).
+  var LIC = null; // 'http://<tv>:<port>' of a service with the license relay
+  function findLicenseRelay(done) {
+    var host = window.__primebrewDebugHost || '127.0.0.1', ports = [8795, 8794, 8793, 8792, 8791, 8790, 8789, 8788, 8787], i = 0;
+    (function next() {
+      if (i >= ports.length) return done(null);
+      var url = 'http://' + host + ':' + ports[i++], x = new XMLHttpRequest();
+      x.open('GET', url + '/license/ping');
+      x.timeout = 3000;
+      x.onload = function () { if (x.status === 204) done(url); else next(); };
+      x.onerror = x.ontimeout = x.onabort = next;
+      x.send();
+    })();
+  }
+  var licensePolling = false;
+  function licensePoll() {
+    if (licensePolling || !LIC) return;
+    licensePolling = true;
+    (function poll() {
+      var x = new XMLHttpRequest();
+      x.open('GET', LIC + '/license/next');
+      x.timeout = 30000;
+      x.onload = function () {
+        if (x.status === 200) {
+          var ch = JSON.parse(x.responseText).challenge; // base64 of the SOAP challenge
+          trace('license challenge ' + ch.length + ' chars -> app');
+          report('playready_license_requested');
+          send('license_request', { request: encodeURIComponent(ch) });
+        }
+        poll();
+      };
+      x.onerror = x.ontimeout = x.onabort = function () { setTimeout(poll, 2000); };
+      x.send();
+    })();
+  }
   function avProps() {
     try { var o = JSON.parse(localStorage.getItem('primebrew_avplay_props')); if (o) return o; } catch (e) {}
-    return { DeleteLicenseAfterUse: true, GetChallenge: true };
+    return LIC ? { DeleteLicenseAfterUse: true, LicenseServer: LIC + '/license' } : null;
   }
   var AVPLAY_BACKEND = {
     name: 'avplay',
     init: function () { return Promise.resolve(); },
     open: function (url, startSec) {
+      if (!LIC) return findLicenseRelay(function (u) {
+        LIC = u || 'none';
+        trace('license relay ' + LIC);
+        if (u) licensePoll();
+        AVPLAY_BACKEND.open(url, startSec);
+      });
+      if (LIC === 'none') LIC = null;
       try { av.stop(); } catch (e) {}
       try { av.close(); } catch (e) {}
       if (!avObj) {
@@ -258,13 +302,14 @@
       done();
     },
     license: function (response) {
-      if (!response || /^dumm/.test(response)) return fail({ code: 3004, message: 'no license from app' });
-      try {
-        trace('InstallLicense ' + response.length + ' chars');
-        av.setDrm('PLAYREADY', 'InstallLicense', response);
-        trace('InstallLicense done');
-        report('playready_license_acquired');
-      } catch (e) { fail({ code: 3005, message: 'InstallLicense: ' + e }); }
+      // Hand the app's license to AVPlay's pending license-server request (the relay).
+      var ok = response && !/^dumm/.test(response);
+      trace('license from app: ' + (ok ? response.length + ' chars' : 'none'));
+      var x = new XMLHttpRequest();
+      x.open('POST', LIC + '/license/response');
+      x.send(ok ? response : 'error');
+      if (ok) report('playready_license_acquired');
+      else fail({ code: 3004, message: 'no license from app' });
     },
     time: function () { try { return av.getCurrentTime() / 1000; } catch (e) { return avLastTime; } },
     paused: function () { return avState() !== 'PLAYING'; },

@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.9.9';
+  var VERSION = '0.10.0';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -184,7 +184,7 @@
   // Debug client: talks to service.js on the TV (127.0.0.1 is allowed from an https page).
   // Ships console output there and evaluates signed commands from tools/tvdebug.py.
   // Our packaged app can't reach loopback: app.js passes the TV's LAN address. Several service
-  // copies may run (8787-8789); use the first that knows /page/ping (current ones).
+  // copies may run (8787-8795); use the newest that knows /page/ping (current ones).
   var DEBUG_HOST = window.__primebrewDebugHost || '127.0.0.1', DEBUG = 'http://' + DEBUG_HOST + ':8787';
   var logBuf = [];
 
@@ -238,7 +238,7 @@
   }
 
   function findService(done) {
-    var ports = [8789, 8788, 8787], i = 0;
+    var ports = [8795, 8794, 8793, 8792, 8791, 8790, 8789, 8788, 8787], i = 0;
     (function next() {
       if (i >= ports.length) return done(false);
       var url = 'http://' + DEBUG_HOST + ':' + ports[i++];

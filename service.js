@@ -76,6 +76,39 @@ function log(level, msg) {
   if (logs.length > MAX_LOGS) logs.splice(0, logs.length - MAX_LOGS);
 }
 
+// License relay for AVPlay (the player in our own app): AVPlay posts its PlayReady challenge to
+// /license like to any license server; the page (tv.js) long-polls /license/next, has Amazon's
+// app fetch the license with the signed-in session, and posts it to /license/response.
+var lic = { avplay: null, challenge: null, pageWaiter: null };
+function licenseRoute(req, res, path, body) {
+  if (path === '/license/ping') return send(res, 204);
+  if (path === '/license' && req.method === 'POST') {
+    if (lic.avplay) send(lic.avplay.res, 503, { error: 'superseded' });
+    lic.avplay = { res: res, timer: setTimeout(function () { lic.avplay = null; send(res, 504, { error: 'no license from page' }); }, 45000) };
+    lic.challenge = new Buffer(body, 'utf8').toString('base64');
+    log('info', 'license: challenge from player (' + body.length + ' bytes)');
+    if (lic.pageWaiter) { var w = lic.pageWaiter; lic.pageWaiter = null; clearTimeout(w.timer); send(w.res, 200, { challenge: lic.challenge }); lic.challenge = null; }
+    return;
+  }
+  if (path === '/license/next') {
+    if (lic.challenge) { send(res, 200, { challenge: lic.challenge }); lic.challenge = null; return; }
+    if (lic.pageWaiter) { clearTimeout(lic.pageWaiter.timer); send(lic.pageWaiter.res, 204); }
+    lic.pageWaiter = { res: res, timer: setTimeout(function () { lic.pageWaiter = null; send(res, 204); }, 25000) };
+    return;
+  }
+  if (path === '/license/response' && req.method === 'POST') {
+    var a = lic.avplay;
+    send(res, 204);
+    if (!a) return log('warn', 'license: response but no player waiting');
+    lic.avplay = null; clearTimeout(a.timer);
+    var lic64 = body.trim(), bin = /^</.test(lic64) ? new Buffer(lic64, 'utf8') : new Buffer(lic64, 'base64');
+    log('info', 'license: answering player (' + bin.length + ' bytes)');
+    a.res.writeHead(bin.length && lic64 !== 'error' ? 200 : 500, { 'Content-Type': 'text/xml; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+    return a.res.end(bin);
+  }
+  send(res, 404, { error: 'not found' });
+}
+
 function pageRoute(req, res, path, body) {
   if (path === '/page/ping') return send(res, 204); // lets the page find a current service
   pageSeenAt = Date.now();
@@ -151,6 +184,10 @@ var server = http.createServer(function (req, res) {
   }
   readBody(req, function (body) {
     try {
+      if (path === '/license' || path.indexOf('/license/') === 0) {
+        if (!isLocal(req)) return send(res, 403, { error: 'license routes are TV-local only' });
+        return licenseRoute(req, res, path, body);
+      }
       if (path.indexOf('/page/') === 0) {
         if (!isLocal(req)) return send(res, 403, { error: 'page routes are localhost only' });
         return pageRoute(req, res, path, body);
@@ -162,9 +199,9 @@ var server = http.createServer(function (req, res) {
   });
 });
 // A newer copy can be started next to older ones still holding 8787 (TizenBrew keeps services
-// in memory until the TV restarts): then take the next port, up to 8789.
+// in memory until the TV restarts): then take the next port, up to 8795.
 server.on('error', function (e) {
-  if (e.code === 'EADDRINUSE' && PORT < 8789) { PORT++; server.listen(PORT, '0.0.0.0'); }
+  if (e.code === 'EADDRINUSE' && PORT < 8795) { PORT++; server.listen(PORT, '0.0.0.0'); }
   else log('error', 'server: ' + e);
 });
 server.on('listening', function () { log('info', 'PrimeBrew debug service listening on ' + PORT); });
