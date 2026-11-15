@@ -30,6 +30,17 @@ jobs:
           echo "$TIZEN_AUTHOR_P12" | base64 -d > "$RUNNER_TEMP/author.p12"
           AUTHOR_P12="$RUNNER_TEMP/author.p12" launcher/build.sh
 
+      # The app and loader load the latest *release*'s files from jsDelivr, pinned to its tag:
+      # make sure jsDelivr serves them before the release (and so "latest") exists.
+      - name: Wait for jsDelivr
+        run: |
+          for f in app.js tv.js userScript.js service.js; do
+            for i in $(seq 30); do
+              curl -sf -o /dev/null "https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@${GITHUB_REF_NAME}/$f" && break
+              sleep 10
+            done
+          done
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
