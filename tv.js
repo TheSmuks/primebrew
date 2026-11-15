@@ -244,6 +244,11 @@
       // AVPlay draws on the video plane under the page: keep the page itself see-through.
       document.documentElement.style.background = document.body.style.background = 'transparent';
       window.__primebrewUrl = url = String(url);
+      // Through the service's manifest proxy (fixes Amazon's bare <cenc:pssh>, absolute BaseURLs).
+      // Options for experiments: localStorage primebrew_mpd_opts (e.g. "drop=ec-3").
+      var mpdOpts = '';
+      try { mpdOpts = localStorage.getItem('primebrew_mpd_opts') || ''; } catch (e) {}
+      if (LIC && mpdOpts !== 'direct') url = LIC + '/mpd?' + (mpdOpts ? mpdOpts + '&' : '') + 'u=' + encodeURIComponent(url);
       try {
         trace('open ' + url.slice(0, 80));
         av.open(url);

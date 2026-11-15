@@ -109,6 +109,47 @@ function licenseRoute(req, res, path, body) {
   send(res, 404, { error: 'not found' });
 }
 
+// Manifest proxy for AVPlay: Amazon's manifests carry bare DRM payloads in <cenc:pssh> (no
+// 'pssh' box) and relative BaseURLs; serve a cleaned copy. Options (query): drop=ec-3 removes
+// AdaptationSets with that codec; nopssh=1 removes the <cenc:pssh> elements instead of fixing.
+function psshBox(systemId, b64) {
+  var data = new Buffer(b64.replace(/\s+/g, ''), 'base64');
+  if (data.length > 8 && data.toString('ascii', 4, 8) === 'pssh') return b64;
+  var head = new Buffer(32);
+  head.writeUInt32BE(32 + data.length, 0); head.write('pssh', 4, 'ascii'); head.writeUInt32BE(0, 8);
+  new Buffer(systemId.replace(/-/g, ''), 'hex').copy(head, 12);
+  head.writeUInt32BE(data.length, 28);
+  return Buffer.concat([head, data]).toString('base64');
+}
+function fetchText(url, cb, hops) {
+  var mod = /^https:/.test(url) ? require('https') : require('http');
+  mod.get(url, function (r) {
+    if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && (hops || 0) < 5) return fetchText(require('url').resolve(url, r.headers.location), cb, (hops || 0) + 1);
+    var d = []; r.on('data', function (c) { d.push(c); }); r.on('end', function () { cb(null, r.statusCode, Buffer.concat(d).toString('utf8')); });
+  }).on('error', function (e) { cb(e); });
+}
+function mpdRoute(req, res, query) {
+  var q = require('querystring').parse(query), url = q.u;
+  fetchText(url, function (err, status, xml) {
+    if (err || status !== 200) return send(res, 502, { error: String(err || status) });
+    var dir = url.split('?')[0].replace(/[^\/]*$/, '');
+    xml = xml.replace(/<BaseURL>(?!https?:)([^<]*)<\/BaseURL>/g, function (a, rel) { return '<BaseURL>' + dir + rel + '</BaseURL>'; });
+    if (q.nopssh) xml = xml.replace(/<cenc:pssh>[^<]*<\/cenc:pssh>/g, '');
+    else xml = xml.replace(/(<ContentProtection\b[^>]*schemeIdUri="urn:uuid:([0-9a-fA-F-]{36})"[^>]*>\s*<cenc:pssh>)([^<]+)(<\/cenc:pssh>)/g,
+      function (a, open, id, data, close) { return open + psshBox(id, data) + close; });
+    if (q.drop) {
+      var codecs = q.drop.split(',');
+      xml = xml.replace(/<AdaptationSet\b[\s\S]*?<\/AdaptationSet>/g, function (as) {
+        for (var i = 0; i < codecs.length; i++) if (as.indexOf('codecs="' + codecs[i]) >= 0) return '';
+        return as;
+      });
+    }
+    log('info', 'mpd: served ' + xml.length + ' bytes (' + query.replace(/u=[^&]*/, 'u=..') + ')');
+    res.writeHead(200, { 'Content-Type': 'application/dash+xml', 'Access-Control-Allow-Origin': '*' });
+    res.end(xml);
+  });
+}
+
 function pageRoute(req, res, path, body) {
   if (path === '/page/ping') return send(res, 204); // lets the page find a current service
   pageSeenAt = Date.now();
@@ -184,6 +225,10 @@ var server = http.createServer(function (req, res) {
   }
   readBody(req, function (body) {
     try {
+      if (path === '/mpd') {
+        if (!isLocal(req)) return send(res, 403, { error: 'mpd proxy is TV-local only' });
+        return mpdRoute(req, res, query);
+      }
       if (path === '/license' || path.indexOf('/license/') === 0) {
         if (!isLocal(req)) return send(res, 403, { error: 'license routes are TV-local only' });
         return licenseRoute(req, res, path, body);
