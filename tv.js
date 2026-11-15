@@ -346,8 +346,12 @@
   // Ruby fetches natively, so the app hands out http:// URLs (subtitles, streams); from this
   // https page those are blocked as mixed content. Amazon's CDNs serve the same over https.
   // Never local addresses: the PrimeBrew debug service is plain http on 127.0.0.1.
+  // Only needed on an https page (TizenBrew's); our packaged app's page isn't one. Never for
+  // local-network addresses (the debug service is plain http on the TV).
+  var UPGRADE = location.protocol === 'https:';
   function https(url) {
-    return typeof url === 'string' && !/^http:\/\/(127\.0\.0\.1|localhost)[:\/]/.test(url) ? url.replace(/^http:\/\//, 'https://') : url;
+    return UPGRADE && typeof url === 'string' && !/^http:\/\/(127\.|localhost|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(url)
+      ? url.replace(/^http:\/\//, 'https://') : url;
   }
   // Amazon's config for this device type says "deviceTier":"Tier-3", which turns off every UI
   // animation (Tier 1 = all, Tier 2 = core, Tier 3/4 = none). The TV handles more: ask for Tier 2
