@@ -19,11 +19,23 @@ of the whole break in one seek, however many ads are chained. Because playback c
 break, the app counts the ads as watched and doesn't pull you back.
 
 **Two ways to run it.** The **PrimeBrew app** (`launcher/`, the home-screen icon) is the main
-one: as an installed Tizen app it can use Samsung's native player (AVPlay), and this TV's browser
-DRM path (EME) decodes protected video as garbage in every app, Samsung's own browser included.
-The app is a tiny bootstrap that loads `app.js` from the latest release, which runs Amazon's TV app
-in the app's own page with `tv.js` on the AVPlay backend. As a **TizenBrew module** (`loader.js`)
-the same bridge uses Shaka Player instead: fine for unencrypted video, not for DRM on such TVs.
+one. This TV's browser DRM path (EME) decodes protected video as garbage in every app, Samsung's
+own browser included; an installed Tizen app can use Samsung's native player (AVPlay) instead.
+
+- `launcher/index.html` is a bootstrap installed once: it loads `app.js` from the latest release
+  (pinned via GitHub's API), so updates need no reinstall.
+- `app.js` runs Amazon's TV app in the app's own page with `tv.js` (AVPlay backend) and
+  `userScript.js` (debug client).
+- `service.js` runs in TizenBrew's background service (it's in TizenBrew's auto-start list and
+  the app starts that service): a loader for the latest `service-core.js`, which provides the
+  signed debug channel, a **license relay** (AVPlay's license server; the page has Amazon's app
+  fetch each license with your session) and a **manifest proxy** (Amazon's manifests carry bare
+  DRM payloads that crash AVPlay's parser).
+- A packaged app can't reach `127.0.0.1` on this TV: the page talks to the service on the TV's
+  own LAN address.
+
+As a **TizenBrew module** (`loader.js`) the same bridge uses Shaka Player instead: fine for
+unencrypted video, not for DRM on such TVs.
 
 The website mode below (`userScript.js` on www.primevideo.com) is kept as a fallback.
 
@@ -74,7 +86,9 @@ before Tizen 7 accept. Tizen 7+ needs a Samsung cert: TizenBrew Installer re-sig
 screen as text, focus, video state), `tv_screenshot` (the UI rendered from the page; video
 planes and DRM video can't be captured), `tv_logs`, `tv_eval`, `tv_keys`, `tv_reset` (reload
 the PrimeBrew page with the latest release), `tv_power` (Wake-on-LAN / off / restart),
-`tv_apps`, `tv_status`, `tv_info`. Set `PRIMEBREW_TV_MAC` for Wake-on-LAN. Launching PrimeBrew
+`tv_apps`, `tv_status`, `tv_info`, `tv_node` (JS in the TV-side service), `tv_install` (install
+the app through the TV's own sdbd: no Host-IP change) and `tv_sdb`. Set `PRIMEBREW_TV_MAC` for
+Wake-on-LAN, `PRIMEBREW_PORT` to pin a debug service port (8787-8795). Launching PrimeBrew
 from outside is unreliable when TizenBrew has an auto-launch module: it usually wins. If the TV is on another network, point
 `PRIMEBREW_SSH` at a host on its LAN that has the tools in `~/primebrew-tools`:
 
