@@ -336,10 +336,16 @@
     }
     return B;
   }
-  // Leaving the app (Home) must release the hardware player; coming back restores it.
+  // Leaving the app (Home, standby) must release the hardware player completely: a protected
+  // stream left suspended across standby left the TV's PlayReady unusable (DRM error 7 for any
+  // title) until a reboot. Close it and tell the app, which reopens playback when it's needed.
   document.addEventListener('visibilitychange', function () {
-    if (!av || !loaded) return;
-    try { if (document.hidden) av.suspend(); else av.restore(); } catch (e) {}
+    if (!av || !document.hidden || avState() === 'NONE') return;
+    trace('hidden: closing the player');
+    try { av.stop(); } catch (e) {}
+    try { av.close(); } catch (e) {}
+    loaded = wantPlay = false;
+    setState('stopped');
   });
 
   var timeTimerOn = false;
