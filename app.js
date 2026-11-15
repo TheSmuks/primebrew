@@ -8,7 +8,11 @@
   var BLAST = 'https://atv-ext-eu.amazon.com/blast-app-hosting/html5/';
   var DTID = 'A1MWYRS2QVQH2N';
 
-  function msg(t) { var m = document.getElementById('msg'); if (m) m.textContent = t; }
+  function msg(t) { var m = document.getElementById('msg'); if (m) m.textContent = t; step('screen: ' + t); }
+  // Startup steps to the debug service, through the bootstrap's report() (works before the
+  // debug client is up).
+  function step(t) { try { window.report('info', t); } catch (e) {} }
+  window.addEventListener('error', function (e) { step('error: ' + e.message + ' @ ' + e.filename + ':' + e.lineno); });
   function load(file) {
     var x = new XMLHttpRequest();
     x.open('GET', BASE + file, false);
@@ -21,8 +25,9 @@
   // reach loopback, so the debug client talks to it on the TV's own LAN address.
   try { window.__primebrewDebugHost = webapis.network.getIp(); } catch (e) {}
 
-  load('tv.js');
-  load('userScript.js'); // debug client, badge
+  step('app.js start; debug host ' + window.__primebrewDebugHost);
+  try { load('tv.js'); step('tv.js ok'); } catch (e) { step('tv.js failed: ' + e); throw e; }
+  try { load('userScript.js'); step('userScript.js ok'); } catch (e) { step('userScript.js failed: ' + (e.stack || e)); }
 
   // The app's "exit" is window.close(); in a Tizen app that has to be an application exit.
   window.close = function () { try { tizen.application.getCurrentApplication().exit(); } catch (e) {} };
@@ -33,6 +38,7 @@
   var x = new XMLHttpRequest();
   x.open('GET', BLAST + 'index.html?deviceTypeID=' + DTID);
   x.onload = function () {
+    step('Amazon index.html ' + x.status + ' ' + x.responseText.length + ' bytes');
     if (x.status !== 200) return msg('Prime Video did not load (HTTP ' + x.status + '). Back exits.');
     var html = x.responseText.replace(/<head([^>]*)>/i, '<head$1><base href="' + BLAST + '">');
     // document.open() keeps this window (and window.hawaii, timers) but erases its event
