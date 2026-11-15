@@ -5,7 +5,9 @@
 (function () {
   var https = require('https'), REPO = 'TheSmuks/primebrew';
   function get(url, cb, hops) {
-    https.get(url, { headers: { 'User-Agent': 'PrimeBrew' } }, function (r) {
+    var o = require('url').parse(url);
+    o.headers = { 'User-Agent': 'PrimeBrew' }; // GitHub's API requires one; (url, opts, cb) needs Node 10+
+    https.get(o, function (r) {
       if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && (hops || 0) < 5) return get(r.headers.location, cb, (hops || 0) + 1);
       var d = []; r.on('data', function (c) { d.push(c); });
       r.on('end', function () { cb(r.statusCode === 200 ? Buffer.concat(d).toString('utf8') : null); });
