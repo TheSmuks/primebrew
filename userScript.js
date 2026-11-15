@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.9.6';
+  var VERSION = '0.9.7';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -193,7 +193,8 @@
     x.open(method, DEBUG + path);
     x.timeout = 30000;
     x.onload = function () { done && done(x.status, x.responseText); };
-    x.onerror = x.ontimeout = function () { done && done(0, ''); };
+    // onabort too: document.open() (how our app loads Amazon's page) cancels requests in flight.
+    x.onerror = x.ontimeout = x.onabort = function () { done && done(0, ''); };
     x.send(body === undefined ? null : body); // text/plain body: no CORS preflight
   }
 
@@ -236,7 +237,7 @@
       x.open('GET', url + '/page/ping');
       x.timeout = 3000;
       x.onload = function () { if (x.status === 204) { DEBUG = url; done(true); } else next(); };
-      x.onerror = x.ontimeout = next;
+      x.onerror = x.ontimeout = x.onabort = next;
       x.send();
     })();
   }
@@ -244,7 +245,8 @@
   findService(function () { poll(); });
   function poll() {
     xhr('GET', '/page/next', undefined, function (status, text) {
-      if (status === 0) return setTimeout(function () { findService(function () { poll(); }); }, 10000); // service not running (yet)
+      // No service, or an old one that refuses us: look again in a while (never spin).
+      if (status !== 200 && status !== 204) return setTimeout(function () { findService(function () { poll(); }); }, 10000);
       if (status === 200) {
         var cmd = JSON.parse(text);
         try {
