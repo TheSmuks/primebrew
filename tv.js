@@ -178,6 +178,12 @@
   // so the app can fetch the license with its session, then we install it.
   var av = null, avObj = null, avSeeking = false, avLastTime = 0;
   function avState() { try { return av.getState(); } catch (e) { return 'NONE'; } }
+  function trace(m) { if (window.__primebrewTraceSync) window.__primebrewTraceSync('AVPlay ' + m); }
+  // DRM properties for AVPlay; override for experiments: localStorage primebrew_avplay_props.
+  function avProps() {
+    try { var o = JSON.parse(localStorage.getItem('primebrew_avplay_props')); if (o) return o; } catch (e) {}
+    return { DeleteLicenseAfterUse: true, GetChallenge: true };
+  }
   var AVPLAY_BACKEND = {
     name: 'avplay',
     init: function () { return Promise.resolve(); },
@@ -195,7 +201,9 @@
       document.documentElement.style.background = document.body.style.background = 'transparent';
       window.__primebrewUrl = url = String(url);
       try {
+        trace('open ' + url.slice(0, 80));
         av.open(url);
+        trace('setDisplayRect');
         av.setDisplayRect(0, 0, 1920, 1080); // always in 1920x1080 coordinates
         av.setListener({
           onbufferingstart: function () { setState('buffering'); },
@@ -208,6 +216,7 @@
           onerror: function (type) { fail({ code: 3002, message: 'AVPlay error ' + type }); },
           onevent: function (type, data) { console.log('[PrimeBrew TV] AVPlay event ' + type + ' ' + String(data).slice(0, 200)); },
           ondrmevent: function (type, data) {
+            trace('drm event ' + type + ' ' + JSON.stringify(data).slice(0, 200));
             if (data && data.name === 'Challenge') {
               // The app wants base64 of the challenge: pass it as is, or encode raw XML.
               var ch = String(data.challenge || '');
@@ -219,11 +228,14 @@
             }
           }
         });
-        // The docs spell the option both ways; send both.
-        av.setDrm('PLAYREADY', 'SetProperties', JSON.stringify({ DeleteLicenseAfterUse: true, GenChallenge: true, GetChallenge: true }));
+        var props = avProps();
+        trace('setDrm SetProperties ' + JSON.stringify(props));
+        if (props) av.setDrm('PLAYREADY', 'SetProperties', JSON.stringify(props));
       } catch (e) { return fail({ code: 3000, message: 'AVPlay open: ' + e }); }
       report('manifest_requested');
+      trace('prepareAsync');
       av.prepareAsync(function () {
+        trace('prepared, duration ' + av.getDuration());
         loaded = true;
         report('manifest_obtained');
         report('metadata', { duration: av.getDuration() / 1000, uid: 0 });
@@ -248,7 +260,9 @@
     license: function (response) {
       if (!response || /^dumm/.test(response)) return fail({ code: 3004, message: 'no license from app' });
       try {
+        trace('InstallLicense ' + response.length + ' chars');
         av.setDrm('PLAYREADY', 'InstallLicense', response);
+        trace('InstallLicense done');
         report('playready_license_acquired');
       } catch (e) { fail({ code: 3005, message: 'InstallLicense: ' + e }); }
     },

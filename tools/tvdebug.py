@@ -10,7 +10,7 @@ usage: tvdebug.py [--ip IP] [--key KEY] COMMAND
   node JS / nodefile FILE   run JS in the TV-side service (Node, with require)
 KEY defaults to debug.key next to this script (private half of service.js's PUBLIC_KEY).
 """
-import base64, json, pathlib, subprocess, sys, time, urllib.error, urllib.request
+import base64, json, os, pathlib, subprocess, sys, time, urllib.error, urllib.request
 
 SNAPSHOT = r"""(function () {
   function desc(el) {
@@ -61,9 +61,12 @@ def run_js(ip, key, js, port=8787):
 
 def main(argv):
     ip, key = '192.168.31.105', str(pathlib.Path(__file__).with_name('debug.key'))
-    while argv[:1] in (['--ip'], ['--key']):
+    forced = os.environ.get('PRIMEBREW_PORT')
+    while argv[:1] in (['--ip'], ['--key'], ['--port']):
         if argv[0] == '--ip':
             ip = argv[1]
+        elif argv[0] == '--port':
+            forced = argv[1]
         else:
             key = argv[1]
         argv = argv[2:]
@@ -71,7 +74,7 @@ def main(argv):
     # Several service copies may run (8787-8789, TizenBrew keeps old ones until a TV restart):
     # page commands go to the one the page talks to (most recently seen page).
     port, best = 8787, -1
-    for p in (8787, 8788, 8789):
+    for p in ((int(forced),) if forced else (8789, 8788, 8787)):  # newest first: ties go to the newer service
         try:
             st = request(ip, key, 'GET', '/status', port=p, timeout=5)
         except SystemExit:

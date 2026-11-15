@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.9.8';
+  var VERSION = '0.9.9';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -220,6 +220,15 @@
     if (!logBuf.length) return;
     xhr('POST', '/page/log', JSON.stringify(logBuf.splice(0, logBuf.length)));
   }, 1000);
+
+  // Synchronous log line: survives a crash right after it (AVPlay can take the app down).
+  window.__primebrewTraceSync = function (msg) {
+    try {
+      var x = new XMLHttpRequest();
+      x.open('POST', DEBUG + '/page/log', false);
+      x.send(JSON.stringify([{ level: 'info', msg: '[trace] ' + msg }]));
+    } catch (e) {}
+  };
 
   function reply(id, ok, value) {
     var out;

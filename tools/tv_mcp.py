@@ -29,7 +29,12 @@ SCREEN_JS = r"""(function () {
 })()"""
 
 
+PORT = os.environ.get('PRIMEBREW_PORT', '')  # pin the debug service port (8787-8789); default: auto
+
+
 def run(argv, stdin=None, timeout=60):
+    if PORT and argv[:2] == ['python3', 'tvdebug.py']:
+        argv = argv[:2] + ['--port', PORT] + argv[2:]
     if SSH:
         cmd = ['ssh', '-o', 'ConnectTimeout=8', SSH,
                'bash -c ' + shlex.quote('cd ' + TOOLS + ' && ' + ' '.join(shlex.quote(a) for a in argv))]
