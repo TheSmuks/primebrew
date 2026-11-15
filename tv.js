@@ -375,6 +375,7 @@
   // ad by the app, we skip it, and the app then resumes the seek to its reserved position.
   var adRanges = [];
   function onTimeline(tl) {
+    window.__primebrewTimeline = tl; // for inspection (tools/tv_mcp.py tv_eval)
     var ranges = [], pos = 0, items = tl.items || [];
     for (var i = 0; i < items.length; i++) {
       var it = items[i];

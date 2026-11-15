@@ -111,9 +111,12 @@ def wake():
     mac = tv_mac()
     if not mac:
         return 'no MAC known (set PRIMEBREW_TV_MAC)'
-    code = ("import socket;m=bytes.fromhex('%s'.replace(':',''));p=b'\\xff'*6+m*16;"
+    # Over Wi-Fi only some destinations wake the TV: send to the global and subnet broadcast and
+    # to the TV's address, ports 9 and 7.
+    subnet = TV_IP.rsplit('.', 1)[0] + '.255'
+    code = ("import socket,time;m=bytes.fromhex('%s'.replace(':',''));p=b'\\xff'*6+m*16;"
             "s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.setsockopt(socket.SOL_SOCKET,socket.SO_BROADCAST,1);"
-            "[s.sendto(p,('255.255.255.255',9)) for _ in range(3)]") % mac
+            "[[s.sendto(p,(a,o)) for a in ('255.255.255.255','%s','%s') for o in (9,7)] and time.sleep(1) for _ in range(5)]") % (mac, subnet, TV_IP)
     return run(['python3', '-c', code]) or 'magic packet sent'
 
 
