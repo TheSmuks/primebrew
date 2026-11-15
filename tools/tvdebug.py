@@ -7,6 +7,7 @@ usage: tvdebug.py [--ip IP] [--key KEY] COMMAND
   eval JS           evaluate JS in the page, print the result (Promises are awaited)
   evalfile FILE     same, JS from a file ('-' = stdin)
   snapshot          URL, title, focused element and the visible interactive elements
+  node JS / nodefile FILE   run JS in the TV-side service (Node, with require)
 KEY defaults to debug.key next to this script (private half of service.js's PUBLIC_KEY).
 """
 import base64, json, pathlib, subprocess, sys, time, urllib.error, urllib.request
@@ -32,11 +33,11 @@ SNAPSHOT = r"""(function () {
 })()"""
 
 
-def request(ip, key, method, path, body=''):
+def request(ip, key, method, path, body='', port=8787):
     ts = str(int(time.time() * 1000))
     sig = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', key],
                          input=f'{ts}\n{method} {path}\n{body}'.encode(), capture_output=True, check=True).stdout
-    req = urllib.request.Request(f'http://{ip}:8787{path}', method=method,
+    req = urllib.request.Request(f'http://{ip}:{port}{path}', method=method,
                                  data=body.encode() if method == 'POST' else None,
                                  headers={'X-PB-TS': ts, 'X-PB-Sig': base64.b64encode(sig).decode(),
                                           'Content-Type': 'text/plain'})
@@ -46,7 +47,7 @@ def request(ip, key, method, path, body=''):
     except urllib.error.HTTPError as e:
         sys.exit(f'HTTP {e.code}: {e.read().decode()}')
     except OSError as e:
-        sys.exit(f'cannot reach debug service at {ip}:8787 ({e}); is PrimeBrew open on the TV?')
+        sys.exit(f'cannot reach debug service at {ip}:{port} ({e}); is PrimeBrew open on the TV?')
     return json.loads(data) if data else None
 
 
@@ -83,6 +84,22 @@ def main(argv):
         run_js(ip, key, ' '.join(rest))
     elif cmd == 'evalfile' and rest:
         run_js(ip, key, sys.stdin.read() if rest[0] == '-' else pathlib.Path(rest[0]).read_text())
+    elif cmd in ('node', 'nodefile') and rest:
+        js = ' '.join(rest) if cmd == 'node' else (sys.stdin.read() if rest[0] == '-' else pathlib.Path(rest[0]).read_text())
+        # A newer service may run on 8788 next to an older one on 8787 (which lacks /node).
+        res = None
+        for port in (8788, 8787):
+            try:
+                res = request(ip, key, 'POST', '/node', js, port)
+                break
+            except SystemExit as e:
+                err = e
+        if res is None:
+            raise err
+        out = res.get('value')
+        print(out if isinstance(out, str) else json.dumps(out, indent=1, ensure_ascii=False))
+        if not res.get('ok'):
+            sys.exit(1)
     elif cmd == 'snapshot':
         run_js(ip, key, SNAPSHOT)
     else:

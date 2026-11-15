@@ -187,6 +187,34 @@ def screenshot(args):
             {'type': 'text', 'text': 'saved %s (%s). Drawn from the page: the real video plane and DRM video are not capturable.' % (path, res.get('note') or 'no video')}]
 
 
+INSTALL_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tv_install.js')
+
+
+def tv_node_js(js):
+    return run(['python3', 'tvdebug.py', 'nodefile', '-'], stdin=js, timeout=130)
+
+
+def tv_sdb(args):
+    cmd = args['cmd'].replace('\\', '\\\\').replace("'", "\\'")
+    return tv_node_js(open(INSTALL_JS).read().replace('__CMD__', cmd).replace('__WGT__', '').replace('__PKG__', ''))
+
+
+def tv_install(args):
+    # The PrimeBrew app from a GitHub release (default: latest), or a local .wgt path.
+    src = args.get('wgt') or 'latest'
+    if os.path.exists(src):
+        data = open(src, 'rb').read()
+    else:
+        api = 'https://api.github.com/repos/TheSmuks/primebrew/releases/' + ('latest' if src == 'latest' else 'tags/' + src)
+        rel = json.load(urllib.request.urlopen(api, timeout=20))
+        asset = next(a for a in rel['assets'] if a['name'].endswith('.wgt'))
+        data = urllib.request.urlopen(asset['browser_download_url'], timeout=60).read()
+        src = rel['tag_name']
+    b64 = __import__('base64').b64encode(data).decode()
+    js = open(INSTALL_JS).read().replace('__WGT__', b64).replace('__PKG__', args.get('package', 'PrimeBrew1')).replace('__CMD__', '')
+    return 'wgt %s (%d bytes)\n' % (src, len(data)) + tv_node_js(js)
+
+
 def logs(args):
     out = run(['python3', 'tvdebug.py', 'logs'])
     lines = [l for l in out.splitlines() if not l.startswith('    at ')]
@@ -214,6 +242,12 @@ TOOLS_DEF = [
       'width': {'type': 'integer', 'description': 'truncate lines (default 400)'}}, logs),
     ('tv_eval', 'Evaluate JavaScript in the PrimeBrew page on the TV; returns the JSON result (Promises are awaited).',
      {'js': {'type': 'string'}}, lambda a: evaljs(a['js'])),
+    ('tv_node', 'Run JavaScript in the TV-side PrimeBrew service (Node 4, ES5, with require: fs, net, child_process...). Promises are awaited.',
+     {'js': {'type': 'string'}}, lambda a: tv_node_js(a['js'])),
+    ('tv_install', 'Install the PrimeBrew app on the TV through its own sdbd (no Host-IP change): wgt = release tag (default latest) or a local .wgt path.',
+     {'wgt': {'type': 'string'}, 'package': {'type': 'string'}}, tv_install),
+    ('tv_sdb', 'Run an sdb shell command on the TV through its own sdbd, e.g. "0 vd_applist" (whitelisted commands only on retail TVs).',
+     {'cmd': {'type': 'string'}}, tv_sdb),
     ('tv_screen', 'What is on the TV screen: URL, focused element, video state, ad breaks, visible text.', {}, lambda a: evaljs(SCREEN_JS)),
     ('tv_keys', 'Press remote keys, e.g. ["KEY_DOWN","KEY_ENTER","wait:2","KEY_RETURN"] (KEY_RETURN = Back). Also text:STR.',
      {'keys': {'type': 'array', 'items': {'type': 'string'}}}, lambda a: run(['python3', 'tvremote.py'] + a['keys'], timeout=120)),

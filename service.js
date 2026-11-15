@@ -21,6 +21,7 @@ var pending = {};     // command id -> LAN response waiting for the result
 var logs = [];
 var nextId = 1;
 var pageSeenAt = 0;
+var NODE_REQUIRE = require; // for /node
 
 function send(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -100,6 +101,30 @@ function lanRoute(req, res, path, query, body) {
     var since = Number((/since=(\d+)/.exec(query) || [])[1] || 0);
     return send(res, 200, logs.filter(function (l) { return l.t > since; }));
   }
+  // Run JS in this service (Node, with require): installs over the TV's local sdbd, file and
+  // process inspection. Same signature requirement as everything here. Promises are awaited.
+  if (path === '/node' && req.method === 'POST') {
+    var finished = false;
+    var finish = function (ok, v) {
+      if (finished) return;
+      finished = true;
+      var out;
+      try { out = JSON.stringify(v === undefined ? null : v); } catch (e) { out = JSON.stringify(String(v)); }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":' + ok + ',"value":' + out + '}');
+    };
+    setTimeout(function () { finish(false, 'timeout after 120 s'); }, 120000);
+    try {
+      // TizenBrew's sandbox copies the host's globals, eval included, so eval here is another
+      // realm's and can't see our require: build a function with require as a parameter.
+      var fn;
+      try { fn = Function('require', 'return (' + body + '\n);'); } catch (e) { fn = Function('require', body); }
+      var r = fn(NODE_REQUIRE);
+      if (r && typeof r.then === 'function') r.then(function (v) { finish(true, v); }, function (e) { finish(false, String(e && e.stack || e)); });
+      else finish(true, r);
+    } catch (e) { finish(false, String(e && e.stack || e)); }
+    return;
+  }
   if (path === '/cmd' && req.method === 'POST') {
     var id = nextId++;
     pending[id] = { res: res, timer: setTimeout(function () {
@@ -112,7 +137,7 @@ function lanRoute(req, res, path, query, body) {
   send(res, 404, { error: 'not found' });
 }
 
-http.createServer(function (req, res) {
+var server = http.createServer(function (req, res) {
   var parts = req.url.split('?'), path = parts[0], query = parts[1] || '';
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, POST' });
@@ -129,6 +154,12 @@ http.createServer(function (req, res) {
       send(res, 500, { error: String(e) });
     }
   });
-}).listen(PORT, '0.0.0.0');
-
-log('info', 'PrimeBrew debug service listening on ' + PORT);
+});
+// A newer copy can be started next to an older one still holding 8787 (TizenBrew keeps services
+// in memory until the TV restarts): then take 8788.
+server.on('error', function (e) {
+  if (e.code === 'EADDRINUSE' && PORT === 8787) { PORT = 8788; server.listen(PORT, '0.0.0.0'); }
+  else log('error', 'server: ' + e);
+});
+server.on('listening', function () { log('info', 'PrimeBrew debug service listening on ' + PORT); });
+server.listen(PORT, '0.0.0.0');
