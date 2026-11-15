@@ -26,8 +26,10 @@
   try { window.__primebrewDebugHost = webapis.network.getIp(); } catch (e) {}
 
   step('app.js start; debug host ' + window.__primebrewDebugHost);
-  try { load('tv.js'); step('tv.js ok'); } catch (e) { step('tv.js failed: ' + e); throw e; }
+  // Debug client first, so a failure further on can be inspected remotely.
+  window.__primebrewTV = true;
   try { load('userScript.js'); step('userScript.js ok'); } catch (e) { step('userScript.js failed: ' + (e.stack || e)); }
+  try { load('tv.js'); step('tv.js ok'); } catch (e) { step('tv.js failed: ' + (e.stack || e)); throw e; }
 
   // The app's "exit" is window.close(); in a Tizen app that has to be an application exit.
   window.close = function () { try { tizen.application.getCurrentApplication().exit(); } catch (e) {} };

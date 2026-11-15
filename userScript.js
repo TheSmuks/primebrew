@@ -1,7 +1,7 @@
 // Injected by TizenBrew via CDP Runtime.evaluate: must be one self-contained file.
 // ES5 on purpose: older Tizen TVs ship old Chromium.
 (function () {
-  var VERSION = '0.9.5';
+  var VERSION = '0.9.6';
 
   // Pick the rect nearest to `from` in direction dir ('left'|'right'|'up'|'down').
   // Distance along the direction counts once, sideways offset counts double,
@@ -122,7 +122,7 @@
   }
 
   // In Amazon's TV app (tv.js) the app does its own remote navigation and skipping.
-  var TV_APP = !!window.hawaii; // tv.js loads first (TizenBrew on atv-ext.*, or our own app)
+  var TV_APP = !!(window.hawaii || window.__primebrewTV); // Amazon's TV app (TizenBrew module or our own app)
 
   if (!TV_APP) window.addEventListener('keydown', function (e) {
     var k = e.keyCode, dir = KEYS[k], v = playerVideo();
